@@ -125,14 +125,34 @@ export function calculateModuleBScore(questions, responses) {
 }
 
 /**
- * Calculate three construct dimension scores from B question scores.
- * Module B questions are tagged with coreDimension.
+ * Calculate three construct dimension scores from BOTH Module A and Module B.
+ *
+ * Mapping of Module A rubric sub-scores to the three constructs:
+ *   - 校准式依赖 (Calibrated Reliance)      ← correctness + resourceEfficiency
+ *   - 核验监督 (Verification Supervision)   ← evidenceBoundary
+ *   - 合规边界 (Compliance Boundary)        ← compliance
+ *
+ * Module B contributes via each question's coreDimension tag.
+ *
+ * Returns { total, fromA, fromB } per dimension.
  */
-export function calculateDimensionScores(moduleBQuestionScores) {
-  const dims = { calibratedReliance: 0, verificationSupervision: 0, complianceBoundary: 0 };
+export function calculateDimensionScores(aQuestionScores, bQuestionScores) {
+  const dims = {
+    calibratedReliance: { total: 0, fromA: 0, fromB: 0 },
+    verificationSupervision: { total: 0, fromA: 0, fromB: 0 },
+    complianceBoundary: { total: 0, fromA: 0, fromB: 0 },
+  };
   const counts = { calibratedReliance: 0, verificationSupervision: 0, complianceBoundary: 0 };
 
-  for (const qs of moduleBQuestionScores) {
+  // --- Module A contribution ---
+  for (const qs of aQuestionScores || []) {
+    dims.calibratedReliance.fromA += (qs.correctness ?? 0) + (qs.resourceEfficiency ?? 0);
+    dims.verificationSupervision.fromA += qs.evidenceBoundary ?? 0;
+    dims.complianceBoundary.fromA += qs.compliance ?? 0;
+  }
+
+  // --- Module B contribution ---
+  for (const qs of bQuestionScores || []) {
     const dim = qs.dimension || '';
     let key = null;
     if (dim.includes('校准式依赖')) key = 'calibratedReliance';
@@ -140,9 +160,16 @@ export function calculateDimensionScores(moduleBQuestionScores) {
     else if (dim.includes('合规边界')) key = 'complianceBoundary';
 
     if (key) {
-      dims[key] += qs.score;
+      dims[key].fromB += qs.score;
       counts[key]++;
     }
+  }
+
+  // Sum + round
+  for (const key of Object.keys(dims)) {
+    dims[key].fromA = Math.round(dims[key].fromA * 10) / 10;
+    dims[key].fromB = Math.round(dims[key].fromB * 10) / 10;
+    dims[key].total = Math.round((dims[key].fromA + dims[key].fromB) * 10) / 10;
   }
 
   return {
@@ -203,7 +230,7 @@ export function runFullScoring(moduleAQuestions, moduleAResponses, moduleBQuesti
   const resScore = computeRES(scoreARaw, energyRemaining);
   const totalScore = computeTotalScore(resScore, scoreBRaw);
   const profile = determineProfile(scoreARaw, scoreBRaw, energyRemaining);
-  const dimensions = calculateDimensionScores(bQuestionScores);
+  const dimensions = calculateDimensionScores(aQuestionScores, bQuestionScores);
 
   // Build drawn question ID strings
   const drawnAIds = moduleAQuestions.map(q => q.id).join(';');

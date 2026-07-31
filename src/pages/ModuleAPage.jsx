@@ -117,7 +117,7 @@ export default function ModuleAPage() {
   const onEvidence = () => {
     if (!evidenceUnlocked && !paidForRef.current[q.id]?.evidence && energyPoints >= 3) {
       // First time: pay and unlock
-      a.consumeEnergy(3, 'ev');
+      a.consumeEnergy(3, 'view_evidence');
       a.setEvidenceUnlocked(true);
       paidForRef.current[q.id].evidence = true;
     } else if (!evidenceUnlocked && paidForRef.current[q.id]?.evidence && energyPoints >= 0) {
@@ -133,7 +133,7 @@ export default function ModuleAPage() {
       // Opening template
       if (!paidForRef.current[q.id]?.template && energyPoints >= 2) {
         // First time: pay
-        a.consumeEnergy(2, 'tp');
+        a.consumeEnergy(2, 'view_template');
         paidForRef.current[q.id].template = true;
         setShowTemplate(true);
       } else if (paidForRef.current[q.id]?.template) {
@@ -148,7 +148,7 @@ export default function ModuleAPage() {
 
   const onRegen = () => {
     if (energyPoints >= 1 && !showPrompt) {
-      a.consumeEnergy(1, 'rg');
+      a.consumeEnergy(1, 'regenerate_prompt');
       setShowPrompt(true);
     }
   };

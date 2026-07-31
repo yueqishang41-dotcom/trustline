@@ -58,9 +58,10 @@ export function exportSPSS(results) {
     results.drawnBIds || '',
     ...aScoreCols,
     ...bScoreCols,
-    dims.calibratedReliance ?? '',
-    dims.verificationSupervision ?? '',
-    dims.complianceBoundary ?? '',
+    // Support both new {total,fromA,fromB} object format and legacy number format
+    (dims.calibratedReliance?.total ?? dims.calibratedReliance ?? ''),
+    (dims.verificationSupervision?.total ?? dims.verificationSupervision ?? ''),
+    (dims.complianceBoundary?.total ?? dims.complianceBoundary ?? ''),
     results.scoreA,
     results.scoreB,
     results.resScore,
@@ -84,14 +85,20 @@ export function exportJSON(results) {
   const moduleADetail = (results.aQuestionScores || []).map(qs => {
     const qMeta = (results.moduleAQuestionsInfo || []).find(q => q.id === qs.id);
     const resp = (results.moduleAResponses || {})[qs.id] || {};
+    const draftLen = (qMeta?.aiDraft || '').length;
+    const editedLen = (resp.editedText || '').length;
     return {
       questionId: qs.id,
       category: qMeta ? (qMeta.sceneType || '') : '',
       aiStatus: qMeta ? (qMeta.aiStatus || '') : '',
       aiDraftOriginal: qMeta ? (qMeta.aiDraft || '') : '',
       editedTextFinal: resp.editedText || '',
+      textLengthChange: editedLen - draftLen,           // 字数变化量 (终稿 - 原稿)
       actionsUsed: resp.actionsUsed || {},
       scoreDetail: {
+        aiInitialScore: qs.total ?? 0,                   // AI 初评分
+        humanAuditedScore: qs.total ?? 0,                // 人工复核分（默认=初评分，待复核）
+        humanAudited: false,                             // 是否已人工复核
         correctness: qs.correctness ?? 0,
         evidenceBoundary: qs.evidenceBoundary ?? 0,
         compliance: qs.compliance ?? 0,
@@ -139,9 +146,26 @@ export function exportJSON(results) {
         profile: results.profile,
         energyRemaining: results.energyRemaining,
         dimensions: {
-          calibratedReliance: dims.calibratedReliance ?? 0,
-          verificationSupervision: dims.verificationSupervision ?? 0,
-          complianceBoundary: dims.complianceBoundary ?? 0,
+          calibratedReliance: dims.calibratedReliance?.total ?? dims.calibratedReliance ?? 0,
+          verificationSupervision: dims.verificationSupervision?.total ?? dims.verificationSupervision ?? 0,
+          complianceBoundary: dims.complianceBoundary?.total ?? dims.complianceBoundary ?? 0,
+          dimensionBreakdown: {
+            calibratedReliance: {
+              total: dims.calibratedReliance?.total ?? 0,
+              fromModuleA: dims.calibratedReliance?.fromA ?? 0,
+              fromModuleB: dims.calibratedReliance?.fromB ?? 0,
+            },
+            verificationSupervision: {
+              total: dims.verificationSupervision?.total ?? 0,
+              fromModuleA: dims.verificationSupervision?.fromA ?? 0,
+              fromModuleB: dims.verificationSupervision?.fromB ?? 0,
+            },
+            complianceBoundary: {
+              total: dims.complianceBoundary?.total ?? 0,
+              fromModuleA: dims.complianceBoundary?.fromA ?? 0,
+              fromModuleB: dims.complianceBoundary?.fromB ?? 0,
+            },
+          },
         },
       },
       moduleADetail,

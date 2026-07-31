@@ -38,47 +38,57 @@ export function generateTestPaper() {
     options: (q.options || []).filter(o => o.text && o.text.trim() !== ''),
   }));
 
-  // --- Module A: stratified selection ---
-  // Goal: 6 questions, 2 per category (data / compliance / communication),
-  //        roughly balanced between AI-error and AI-correct
+  // --- Module A: strictly stratified selection ---
+  // HARD RULES:
+  //   每类 (data / compliance / communication) 严格抽 2 题
+  //   全局错误题 3 道、正确题 3 道
+  const CATS = ['data', 'compliance', 'communication'];
   const byCat = { data: [], compliance: [], communication: [] };
   for (const q of allA) {
     if (byCat[q.sceneType]) byCat[q.sceneType].push(q);
   }
 
-  const CAT_ORDER = ['data', 'compliance', 'communication'];
-  const selectedA = [];
-  const NEED_TOTAL = 6;
-  const NEED_PER_CAT = 2;
+  // Each category draws exactly 2 questions. dist[i] = #error questions drawn from category i.
+  // Possible error distributions summing to 3 across 3 categories, each 0..2:
+  const DISTRIBUTIONS = [
+    [2, 1, 0], [2, 0, 1],
+    [1, 2, 0], [1, 1, 1], [1, 0, 2],
+    [0, 2, 1], [0, 1, 2],
+  ];
 
-  for (const cat of CAT_ORDER) {
-    const pool = shuffle(byCat[cat] || []);
-    if (pool.length === 0) continue;
+  let selectedA = null;
 
-    const errPool = pool.filter(q => aiHasError(q));
-    const okPool = pool.filter(q => !aiHasError(q));
-
-    // Determine how many error vs correct questions to take from this category
-    const takenErr = selectedA.filter(q => aiHasError(q)).length;
-    const takenOk = selectedA.filter(q => !aiHasError(q)).length;
-    const remainingErrNeeded = Math.min(errPool.length, Math.max(0, 3 - takenErr));
-    const remainingOkNeeded = Math.min(okPool.length, Math.max(0, 3 - takenOk));
-    const remainingSlots = NEED_TOTAL - selectedA.length;
-
-    // Distribute the slots for this category
-    let takeErr = Math.min(remainingErrNeeded, remainingSlots);
-    let takeOk = Math.min(remainingOkNeeded, remainingSlots - takeErr);
-    // Fill remaining if slots still open
-    if (takeErr + takeOk < remainingSlots) {
-      const extraErr = Math.min(errPool.length - takeErr, remainingSlots - takeErr - takeOk);
-      takeErr += extraErr;
-      if (takeErr + takeOk < remainingSlots) {
-        takeOk = Math.min(okPool.length - takeOk, remainingSlots - takeErr - takeOk);
+  // Try random feasible distribution until one works
+  const distPool = shuffle(DISTRIBUTIONS);
+  for (const dist of distPool) {
+    const attempt = [];
+    let feasible = true;
+    for (let i = 0; i < CATS.length; i++) {
+      const cat = CATS[i];
+      const pool = byCat[cat] || [];
+      const errPool = pool.filter(q => aiHasError(q));
+      const okPool = pool.filter(q => !aiHasError(q));
+      const needErr = dist[i];
+      const needOk = 2 - needErr;
+      if (errPool.length < needErr || okPool.length < needOk) {
+        feasible = false;
+        break;
       }
+      attempt.push(...shuffle(errPool).slice(0, needErr));
+      attempt.push(...shuffle(okPool).slice(0, needOk));
     }
+    if (feasible) {
+      selectedA = attempt;
+      break;
+    }
+  }
 
-    selectedA.push(...shuffle(errPool).slice(0, takeErr));
-    selectedA.push(...shuffle(okPool).slice(0, takeOk));
+  // Safety fallback: if no distribution feasible, take 2 from each category anyway
+  if (!selectedA) {
+    selectedA = [];
+    for (const cat of CATS) {
+      selectedA.push(...shuffle(byCat[cat] || []).slice(0, 2));
+    }
   }
 
   // --- Module B: random 10 ---
