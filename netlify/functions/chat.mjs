@@ -7,7 +7,20 @@ export async function handler(event) {
   }
 
   try {
-    const { messages } = JSON.parse(event.body);
+    // Netlify Functions v2 自动解析 JSON body（event.body 已是对象）；
+    // v1 传的是字符串。这里兼容两种格式。
+    let payload = event.body;
+    if (typeof payload === 'string') {
+      try {
+        payload = JSON.parse(payload || '{}');
+      } catch {
+        payload = {};
+      }
+    } else if (!payload) {
+      payload = {};
+    }
+
+    const { messages } = payload;
     if (!messages || !Array.isArray(messages)) {
       return { statusCode: 400, body: JSON.stringify({ error: 'messages array is required' }) };
     }

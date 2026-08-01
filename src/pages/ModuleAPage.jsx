@@ -189,12 +189,21 @@ export default function ModuleAPage() {
         setPromptInput('');
         return;
       }
-    } catch (_) {
-      // Server not running, fall through to fallback
+
+      // API returned an error status — surface it for debugging
+      let errMsg = `API 请求失败（状态码 ${res.status}）`;
+      try {
+        const errData = await res.json();
+        if (errData?.error) errMsg = `AI 服务出错：${errData.error}`;
+      } catch (_) {}
+      window.alert(errMsg);
+      return;
+    } catch (e) {
+      window.alert(`AI 服务连接失败：${e.message || '网络错误'}`);
+      return;
     }
 
-    // Fallback: prepend adjustment note
-    setText(`[调整] ${promptInput}\n\n${orig}`);
+    // (No silent fallback anymore — surface errors instead)
     setShowPrompt(false);
     setPromptInput('');
   };
