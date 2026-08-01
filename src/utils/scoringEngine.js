@@ -86,7 +86,21 @@ export function scoreModuleAQuestion(question, response) {
 
   const total = Math.min(Math.round((correctness + evidenceBoundary + compliance + resourceEfficiency) * 10) / 10, 10);
 
-  return { total, correctness, evidenceBoundary, compliance, resourceEfficiency };
+  // Build AI scoring rationale for auditability
+  const rationale = [];
+  if (hasSignificantEdit) {
+    rationale.push(`检测到对AI初稿的有效修改（相似度 ${(textSimilarity(draftClean, editedClean) * 100).toFixed(0)}%）`);
+  } else {
+    rationale.push('未对AI初稿进行实质修改，直接采纳AI输出');
+  }
+  rationale.push(`交付正确性评分 ${correctness}/3（${correctOutput ? '存在参考答案，按相似度判定' : '无参考答案，按编辑行为奖励'}）`);
+  if (viewedEvidence) rationale.push('查阅了原始材料（证据边界 +1.5）');
+  if (usedTemplate) rationale.push('查看了工作指引模板（证据边界 +1）');
+  if (usedRegenerate && !viewedEvidence) rationale.push('仅使用重新生成，未查阅证据（证据边界 +0.5）');
+  if (hasSignificantEdit) rationale.push('进行了有效修正（合规边界 +1）');
+  rationale.push(`共执行 ${totalActions} 项辅助操作（资源效率 ${resourceEfficiency}/2）`);
+
+  return { total, correctness, evidenceBoundary, compliance, resourceEfficiency, rationale };
 }
 
 /**

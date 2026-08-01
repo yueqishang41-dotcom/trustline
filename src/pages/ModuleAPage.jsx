@@ -54,6 +54,8 @@ export default function ModuleAPage() {
 
   // Track per-question payment status (consume energy once per question)
   const paidForRef = useRef({}); // { [questionId]: { template: bool, evidence: bool } }
+  // Track per-question start time for elapsed-time measurement
+  const questionStartRef = useRef(Date.now());
 
   useEffect(() => {
     if (!q) return;
@@ -66,6 +68,8 @@ export default function ModuleAPage() {
     if (!paidForRef.current[q.id]) {
       paidForRef.current[q.id] = { template: false, evidence: false };
     }
+    // Record start time when entering a new question
+    questionStartRef.current = Date.now();
   }, [moduleACurrentIndex, q?.id]);
 
   useEffect(() => {
@@ -117,7 +121,7 @@ export default function ModuleAPage() {
   const onEvidence = () => {
     if (!evidenceUnlocked && !paidForRef.current[q.id]?.evidence && energyPoints >= 3) {
       // First time: pay and unlock
-      a.consumeEnergy(3, 'view_evidence');
+      a.consumeEnergy(3, 'view_evidence', q.id);
       a.setEvidenceUnlocked(true);
       paidForRef.current[q.id].evidence = true;
     } else if (!evidenceUnlocked && paidForRef.current[q.id]?.evidence && energyPoints >= 0) {
@@ -133,7 +137,7 @@ export default function ModuleAPage() {
       // Opening template
       if (!paidForRef.current[q.id]?.template && energyPoints >= 2) {
         // First time: pay
-        a.consumeEnergy(2, 'view_template');
+        a.consumeEnergy(2, 'view_template', q.id);
         paidForRef.current[q.id].template = true;
         setShowTemplate(true);
       } else if (paidForRef.current[q.id]?.template) {
@@ -148,7 +152,7 @@ export default function ModuleAPage() {
 
   const onRegen = () => {
     if (energyPoints >= 1 && !showPrompt) {
-      a.consumeEnergy(1, 'regenerate_prompt');
+      a.consumeEnergy(1, 'regenerate_prompt', q.id);
       setShowPrompt(true);
     }
   };
@@ -156,6 +160,7 @@ export default function ModuleAPage() {
   const onSubmit = () => {
     a.updateModuleAResponse(q.id, {
       editedText: text,
+      timeUsed: Math.round((Date.now() - questionStartRef.current) / 1000),
       actionsUsed: {
         viewEvidence: paidForRef.current[q.id]?.evidence || false,
         viewTemplate: paidForRef.current[q.id]?.template || false,

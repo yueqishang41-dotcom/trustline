@@ -216,11 +216,14 @@ export function useTestActions() {
     dispatch({ type: actions.UPDATE_MODULE_A_RESPONSE, payload: { questionId, data } });
   }, [dispatch]);
 
-  const consumeEnergy = useCallback((cost, actionName) => {
+  const consumeEnergy = useCallback((cost, actionName, questionId) => {
     dispatch({ type: actions.CONSUME_ENERGY, payload: cost });
     dispatch({
       type: actions.ADD_LOG,
-      payload: createLogEntry(actionName || 'energy_consumed', `Cost: ${cost}`, { energyCost: cost }),
+      payload: createLogEntry(actionName || 'energy_consumed', `Cost: ${cost}`, {
+        energyCost: cost,
+        questionId: questionId || null,
+      }),
     });
   }, [dispatch]);
 

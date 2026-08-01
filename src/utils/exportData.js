@@ -94,6 +94,7 @@ export function exportJSON(results) {
       aiDraftOriginal: qMeta ? (qMeta.aiDraft || '') : '',
       editedTextFinal: resp.editedText || '',
       textLengthChange: editedLen - draftLen,           // 字数变化量 (终稿 - 原稿)
+      timeUsedSec: resp.timeUsed ?? null,               // 本题耗时（秒）
       actionsUsed: resp.actionsUsed || {},
       scoreDetail: {
         aiInitialScore: qs.total ?? 0,                   // AI 初评分
@@ -104,6 +105,7 @@ export function exportJSON(results) {
         compliance: qs.compliance ?? 0,
         resourceEfficiency: qs.resourceEfficiency ?? 0,
         totalItemScore: qs.total ?? 0,
+        scoringRationale: qs.rationale || [],            // AI 评分理由/判定依据
       },
     };
   });
@@ -170,12 +172,14 @@ export function exportJSON(results) {
       },
       moduleADetail,
       moduleBDetail,
-      behavioralLogs: (results.behavioralLogs || []).map(l => ({
+      behavioralTimeline: (results.behavioralLogs || []).map(l => ({
         timestamp: l.timestamp,
         action: l.action,
         detail: l.detail,
         energyCost: l.energyCost,
+        questionId: l.questionId || null,
       })),
+      behavioralLogs: results.behavioralLogs || [],
     },
     null,
     2
@@ -205,29 +209,54 @@ export function exportReport(results) {
   const viewTemplateCount = countAction('view_template');
   const regenerateCount = countAction('regenerate_prompt');
 
-  // Module A per-question table rows
+  // Module A per-question table rows (with time + scoring rationale)
   const aRows = (results.aQuestionScores || []).map(qs => {
     const qMeta = (results.moduleAQuestionsInfo || []).find(q => q.id === qs.id);
     const resp = (results.moduleAResponses || {})[qs.id] || {};
     const edited = resp.editedText && resp.editedText.trim() !== (qMeta?.aiDraft || '').trim();
+    const time = resp.timeUsed;
     return {
       id: qs.id,
       category: qMeta ? (qMeta.sceneType || '') : '',
       aiStatus: qMeta ? (qMeta.aiStatus || '') : '',
       total: qs.total ?? 0,
       edited: !!edited,
+      time: time,
+      rationale: (qs.rationale || []).join('；'),
     };
   });
 
-  // Module B per-question rows
-  const bRows = (results.bQuestionScores || []).map((qs, i) => ({
-    id: qs.id,
-    dim: qs.dimension || '',
-    score: qs.score ?? 0,
-    num: i + 1,
-  }));
+  // Module B per-question rows (with time)
+  const bRows = (results.bQuestionScores || []).map((qs, i) => {
+    const resp = (results.moduleBResponses || {})[qs.id] || {};
+    const time = resp.timeUsed;
+    return {
+      id: qs.id,
+      dim: qs.dimension || '',
+      score: qs.score ?? 0,
+      num: i + 1,
+      time: time,
+    };
+  });
 
   const catLabels = { data: '数据分析', compliance: '制度合规', communication: '对外沟通' };
+
+  // Energy usage detail: how many points spent on each purpose
+  const energyTotal = results.energyRemaining !== undefined ? 20 - results.energyRemaining : null;
+  const energyBreakdown = [
+    { label: '查阅原始材料（3点/次）', cost: 3, count: viewEvidenceCount },
+    { label: '查看工作指引（2点/次）', cost: 2, count: viewTemplateCount },
+    { label: '微调 Prompt（1点/次）', cost: 1, count: regenerateCount },
+  ];
+  const energyRowsHtml = energyBreakdown
+    .map(e => `<tr><td>${e.label}</td><td class="num">${e.count} 次</td><td class="num">${e.cost * e.count} 点</td></tr>`)
+    .join('');
+
+  // Behavioral timeline (last ~15 entries, reverse chronological)
+  const timelineRows = [...logs].slice(-15).map(l => {
+    const t = l.timestamp ? new Date(l.timestamp).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+    return `<tr><td>${t}</td><td>${l.action || ''}</td><td>${l.questionId || ''}</td><td class="num">${l.energyCost ? '-' + l.energyCost : ''}</td></tr>`;
+  }).join('');
 
   const dimBar = (label, obj, color, max) => {
     const total = dimTotal(obj);
@@ -249,6 +278,7 @@ export function exportReport(results) {
       <td>${r.id}</td>
       <td><span class="tag ${catLabels[r.category] ? 'tag-blue' : 'tag-gray'}">${catLabels[r.category] || r.category || '-'}</span></td>
       <td>${r.edited ? '<span class="badge-green">已修正</span>' : '<span class="badge-gray">未修改</span>'}</td>
+      <td class="num">${r.time != null ? r.time + 's' : '-'}</td>
       <td class="num">${r.total} / 10</td>
     </tr>`).join('');
 
@@ -256,6 +286,7 @@ export function exportReport(results) {
     <tr>
       <td>${r.id}</td>
       <td>${r.dim || '-'}</td>
+      <td class="num">${r.time != null ? r.time + 's' : '-'}</td>
       <td class="num">${r.score}</td>
     </tr>`).join('');
 
@@ -341,7 +372,9 @@ export function exportReport(results) {
       <div class="total-meta">
         <div class="meta-cell"><div class="k">模块 A（60分制）</div><div class="v">${results.scoreA ?? '-'}</div></div>
         <div class="meta-cell"><div class="k">模块 B（20分制）</div><div class="v">${results.scoreB ?? '-'}</div></div>
+        <div class="meta-cell"><div class="k">RES 分数</div><div class="v">${results.resScore ?? '-'}</div></div>
         <div class="meta-cell"><div class="k">总用时</div><div class="v">${results.timeUsedSec ? Math.floor(results.timeUsedSec/60)+' 分 '+results.timeUsedSec%60+' 秒' : '-'}</div></div>
+        <div class="meta-cell"><div class="k">精力消耗</div><div class="v">${energyTotal != null ? energyTotal : '-'} / 20 点</div></div>
         <div class="meta-cell"><div class="k">剩余精力</div><div class="v">${results.energyRemaining ?? '-'} / 20 点</div></div>
       </div>
     </div>
@@ -359,25 +392,38 @@ export function exportReport(results) {
     <div class="section">
       <div class="section-title"><span class="dot"></span>模块 A · 沉浸式文书审阅（6 题）</div>
       <table>
-        <thead><tr><th>题号</th><th>类别</th><th>修正情况</th><th class="num">得分</th></tr></thead>
+        <thead><tr><th>题号</th><th>类别</th><th>修正情况</th><th class="num">耗时</th><th class="num">得分</th></tr></thead>
         <tbody>${aRowHtml}</tbody>
       </table>
+      <div style="font-size:11px;color:#94a3b8;margin-top:6px;">模块 A 得分为 AI 自动初评（Rubric 四维度），提交后需人工复核校正。</div>
     </div>
 
     <!-- 模块B明细 -->
     <div class="section">
       <div class="section-title"><span class="dot"></span>模块 B · 微决策情境判断（10 题）</div>
       <table>
-        <thead><tr><th>题号</th><th>所属维度</th><th class="num">得分</th></tr></thead>
+        <thead><tr><th>题号</th><th>所属维度</th><th class="num">耗时</th><th class="num">得分</th></tr></thead>
         <tbody>${bRowHtml}</tbody>
       </table>
     </div>
 
-    <!-- 行为概览 -->
+    <!-- 精力消耗 -->
     <div class="section">
-      <div class="section-title"><span class="dot"></span>行为过程概览</div>
-      <div class="meta-cell" style="margin-bottom:10px;"><div class="k">精力消耗明细</div><div class="v">查阅原始材料 ${viewEvidenceCount} 次 · 查看模板 ${viewTemplateCount} 次 · 微调Prompt ${regenerateCount} 次</div></div>
-      <div class="meta-cell"><div class="k">行为日志总条数</div><div class="v">${logs.length} 条（完整行为轨迹见 JSON 日志文件）</div></div>
+      <div class="section-title"><span class="dot"></span>精力点数使用明细</div>
+      <table>
+        <thead><tr><th>用途</th><th class="num">使用次数</th><th class="num">消耗点数</th></tr></thead>
+        <tbody>${energyRowsHtml}</tbody>
+      </table>
+    </div>
+
+    <!-- 行为时间轴 -->
+    <div class="section">
+      <div class="section-title"><span class="dot"></span>行为轨迹时间轴（最近 15 条）</div>
+      <table>
+        <thead><tr><th>时间</th><th>操作</th><th>题目</th><th class="num">消耗</th></tr></thead>
+        <tbody>${timelineRows}</tbody>
+      </table>
+      <div style="font-size:11px;color:#94a3b8;margin-top:6px;">完整行为轨迹（含每一步操作的先后顺序、题目归属、精力消耗）见 JSON 日志文件。</div>
     </div>
 
     <div class="footer">本报告由 Trustline 测验系统自动生成 · ${new Date().toLocaleString('zh-CN')} · 数据文件：CSV / JSON 随本报告一同导出</div>
