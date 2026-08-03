@@ -17,9 +17,9 @@ export default function ModuleBPage() {
 
   const shuffled = useMemo(() => q ? shuffle(q.options || []) : [], [moduleBCurrentIndex, q?.id]);
   const [sel, setSel] = useState(null);
-  const [done, setDone] = useState(false);
   const [cd, setCd] = useState(1500);
   const questionStartRef = useRef(Date.now());
+  const done = sel !== null && sel !== undefined;
 
   useEffect(() => {
     if (!startTime) return;
@@ -28,18 +28,28 @@ export default function ModuleBPage() {
   }, [startTime]);
 
   useEffect(() => {
-    if (saved) { setSel(saved.selectedIndex); setDone(true); }
-    else { setSel(null); setDone(false); questionStartRef.current = Date.now(); }
+    if (saved) { setSel(saved.selectedIndex ?? null); }
+    else { setSel(null); questionStartRef.current = Date.now(); }
   }, [moduleBCurrentIndex, q?.id]);
 
   const pick = useCallback((opt) => {
-    if (done) return;
-    setSel(opt._orig); setDone(true);
-    actions.updateModuleBResponse(q.id, {
-      selectedIndex: opt._orig, selectedScore: opt.score, selectedText: opt.text,
-      timeUsed: Math.round((Date.now() - questionStartRef.current) / 1000),
-    });
-  }, [done, q, actions]);
+    const timeUsed = Math.round((Date.now() - questionStartRef.current) / 1000);
+    if (sel === opt._orig) {
+      // 点击已选项 → 取消选择（未点下一题前可重新选择）
+      setSel(null);
+      actions.updateModuleBResponse(q.id, {
+        selectedIndex: undefined, selectedScore: undefined, selectedText: undefined,
+        timeUsed,
+      });
+    } else {
+      // 点击其他选项 → 选中 / 改选
+      setSel(opt._orig);
+      actions.updateModuleBResponse(q.id, {
+        selectedIndex: opt._orig, selectedScore: opt.score, selectedText: opt.text,
+        timeUsed,
+      });
+    }
+  }, [sel, q, actions]);
 
   if (!q) return null;
 
@@ -108,13 +118,11 @@ export default function ModuleBPage() {
             {shuffled.map((opt, di) => {
               const isSel = sel === opt._orig;
               return (
-                <button key={di} onClick={() => pick(opt)} disabled={done}
-                  className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
+                <button key={di} onClick={() => pick(opt)}
+                  className={`w-full text-left p-4 rounded-xl border-2 transition-all cursor-pointer ${
                     isSel
                       ? 'bg-blue-50 border-blue-300 shadow-sm'
-                      : done
-                      ? 'bg-white/50 border-slate-200 opacity-50 cursor-default'
-                      : 'bg-white border-slate-200 hover:border-blue-200 hover:shadow-sm cursor-pointer'
+                      : 'bg-white border-slate-200 hover:border-blue-200 hover:shadow-sm'
                   }`}>
                   <div className="flex items-start gap-3">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
@@ -127,6 +135,8 @@ export default function ModuleBPage() {
               );
             })}
           </div>
+
+          <p className="text-xs text-slate-400 pt-1">点击已选选项可取消，点击其他选项可更改，确认后点击「下一题」。</p>
 
           {/* Next */}
           <div className="flex justify-end pt-2">

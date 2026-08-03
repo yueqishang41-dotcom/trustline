@@ -245,7 +245,7 @@ export function exportReport(results) {
   const energyTotal = results.energyRemaining !== undefined ? 20 - results.energyRemaining : null;
   const energyBreakdown = [
     { label: '查阅原始材料（3点/次）', cost: 3, count: viewEvidenceCount },
-    { label: '查看工作指引（2点/次）', cost: 2, count: viewTemplateCount },
+    { label: '查看工作规范（2点/次）', cost: 2, count: viewTemplateCount },
     { label: '微调 Prompt（1点/次）', cost: 1, count: regenerateCount },
   ];
   const energyRowsHtml = energyBreakdown
