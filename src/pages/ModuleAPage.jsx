@@ -175,15 +175,27 @@ export default function ModuleAPage() {
   const applyPrompt = async () => {
     if (!promptInput.trim()) return;
 
-    // 微调请求：严格基于当前文本框内容（含已手动编辑部分）+ 携带当前题工作规范
+    // 微调请求：严格基于当前文本框内容（含已手动编辑部分）修改
+    // 仅当「本题已付费解锁工作规范」且「提示语明确提到'规范'」同时满足时，
+    // 才将本题工作规范携带给 AI 作为修改依据；否则只按提示语修改，不透露规范内容。
     const currentText = text.trim();
     const guideline = (q.guidelines || '').trim();
-    const userContent = [
+    const unlockedGuideline = paidForRef.current[q.id]?.template === true; // 花过2点解锁本题规范
+    const mentionsGuideline = /规范/.test(promptInput);                    // 提示语提到"规范"
+    const useGuideline = unlockedGuideline && mentionsGuideline;
+
+    const blocks = [
       '你是一位专业的职场AI助理。请在一份工作文档的当前内容基础上按要求修改，直接输出修改后的完整文档。',
       '',
-      '【工作规范】',
-      guideline || '（本题无特殊规范，请保持专业、简洁、准确。）',
-      '',
+    ];
+    if (useGuideline) {
+      blocks.push(
+        '【工作规范】',
+        guideline || '（本题无特殊规范，请保持专业、简洁、准确。）',
+        '',
+      );
+    }
+    blocks.push(
       '【当前文档】',
       '"""',
       currentText || orig,
@@ -192,7 +204,8 @@ export default function ModuleAPage() {
       `【修改要求】${promptInput}`,
       '',
       '要求：严格基于上述当前文档内容进行修改，完整保留我已手动编辑的部分，不得丢弃或另起炉灶生成与当前内容无关的版本。',
-    ].join('\n');
+    );
+    const userContent = blocks.join('\n');
 
     // Try to call DeepSeek API proxy
     try {
