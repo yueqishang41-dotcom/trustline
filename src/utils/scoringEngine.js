@@ -1,4 +1,4 @@
-import itemBank from '../data/itemBank.json';
+import itemBank from '../data/itemBank.json' with { type: 'json' };
 
 const rubric = itemBank.scoringRubric;
 const params = rubric.resAlgorithm?.parameters || {};
@@ -10,6 +10,7 @@ const MAX_B = 20;
 
 /**
  * Compute text similarity (0-1) between two strings.
+ * 字符集 Jaccard —— 用于"是否发生实质修改"的判定（hasSignificantEdit）。
  */
 function textSimilarity(a, b) {
   if (!a || !b) return 0;
@@ -19,6 +20,29 @@ function textSimilarity(a, b) {
   if (aClean.length < 5 || bClean.length < 5) return aClean === bClean ? 1 : 0;
   const setA = new Set(aClean);
   const setB = new Set(bClean);
+  const intersection = new Set([...setA].filter(c => setB.has(c)));
+  const union = new Set([...setA, ...setB]);
+  return intersection.size / union.size;
+}
+
+/**
+ * Compute character-bigram Jaccard similarity (0-1) between two strings.
+ * 二元组 Jaccard —— 比字符集更敏感，能区分"上升/下降"这类局部改动，
+ * 用于提交文本与参考答案（correctOutput）的正确性比对。
+ */
+function bigramSimilarity(a, b) {
+  if (!a || !b) return 0;
+  const aClean = a.trim();
+  const bClean = b.trim();
+  if (aClean === bClean) return 1;
+  if (aClean.length < 5 || bClean.length < 5) return aClean === bClean ? 1 : 0;
+  const bigrams = (s) => {
+    const set = new Set();
+    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+    return set;
+  };
+  const setA = bigrams(aClean);
+  const setB = bigrams(bClean);
   const intersection = new Set([...setA].filter(c => setB.has(c)));
   const union = new Set([...setA, ...setB]);
   return intersection.size / union.size;
@@ -44,13 +68,16 @@ export function scoreModuleAQuestion(question, response) {
 
   // 1. Correctness & Accuracy (0-3)
   let correctness = 0;
-  if (hasSignificantEdit && correctOutput) {
-    const sim = textSimilarity(editedClean, correctOutput.trim());
+  if (correctOutput) {
+    // 有参考答案：比较"最终交付文本"与理想答案的二元组相似度。
+    // 提交内容 = 编辑后的终稿（未编辑则视为提交了 AI 初稿）。
+    const submitted = editedClean || draftClean;
+    const sim = bigramSimilarity(submitted, correctOutput.trim());
     if (sim > 0.8) correctness = 3;
     else if (sim > 0.6) correctness = 2;
-    else if (sim > 0.3) correctness = 1;
     else correctness = 1;
   } else if (hasSignificantEdit) {
+    // 无参考答案：退化为"编辑行为奖励"
     correctness = 2;
   } else {
     correctness = 1;

@@ -1,4 +1,4 @@
-import itemBank from '../data/itemBank.json';
+import itemBank from '../data/itemBank.json' with { type: 'json' };
 
 function norm(t) {
   if (!t) return 'unknown';
