@@ -224,12 +224,6 @@ export default function PilotModuleAPage() {
                 ) : (
                   <p className="text-sm text-slate-400 text-center py-8">（该题型暂无工作规范）</p>
                 )}
-                {!evidencePaid && (
-                  <button onClick={onEvidence} disabled={energyPoints < 3}
-                    className="w-full px-4 py-2.5 text-sm rounded-lg font-medium flex items-center justify-center gap-2 bg-violet-50 text-violet-700 border-2 border-violet-200 hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                    <FileText className="w-4 h-4" /> 解锁材料包（消耗 3 点精力）
-                  </button>
-                )}
               </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center gap-4">
@@ -237,20 +231,6 @@ export default function PilotModuleAPage() {
                 <div>
                   <p className="text-base font-medium text-slate-600">参考信息已锁定</p>
                   <p className="text-sm text-slate-400 mt-1">消耗精力解锁材料包或工作规范</p>
-                </div>
-                <div className="flex flex-col gap-2 w-full max-w-[220px]">
-                  <button onClick={onShowTemplate} disabled={!templatePaid && energyPoints < 2}
-                    className={`w-full px-4 py-2.5 text-sm rounded-lg font-medium flex items-center justify-center gap-2 ${
-                      energyPoints >= 2 || templatePaid ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-slate-100 text-slate-300 cursor-not-allowed'
-                    }`}>
-                    <BookOpen className="w-4 h-4" /> 查看工作规范（消耗 2 点精力）
-                  </button>
-                  <button onClick={onEvidence} disabled={!evidencePaid && energyPoints < 3}
-                    className={`w-full px-4 py-2.5 text-sm rounded-lg font-medium flex items-center justify-center gap-2 ${
-                      energyPoints >= 3 || evidencePaid ? 'bg-violet-500 text-white hover:bg-violet-600' : 'bg-slate-100 text-slate-300 cursor-not-allowed'
-                    }`}>
-                    <FileText className="w-4 h-4" /> 解锁材料包（消耗 3 点精力）
-                  </button>
                 </div>
               </div>
             )}

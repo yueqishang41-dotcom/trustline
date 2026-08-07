@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CheckCircle, Award } from 'lucide-react';
+import { CheckCircle, Award, RotateCcw } from 'lucide-react';
 import { usePilotState, usePilotActions } from '../pilotStore';
 import { uploadResults } from '../pilotUpload';
 
@@ -43,7 +43,7 @@ export default function PilotCompletionPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-violet-50 to-white flex items-center justify-center p-6">
+    <div className="relative min-h-screen bg-gradient-to-b from-violet-50 to-white flex items-center justify-center p-6">
       <div className="w-full max-w-md animate-fadeIn">
         <div className="panel p-10 text-center">
           <div className="inline-flex items-center justify-center w-20 h-20 bg-emerald-50 rounded-full mb-6 mx-auto">
@@ -73,6 +73,18 @@ export default function PilotCompletionPage() {
           </div>
         </div>
       </div>
+
+      {/* 工作人员专用：再次测试（低调，被试不易察觉） */}
+      <button
+        onClick={() => {
+          if (window.confirm('确认重置并重新开始？本机已记录的数据不受影响。')) reset();
+        }}
+        className="absolute bottom-3 left-3 opacity-15 hover:opacity-60 transition-opacity p-1"
+        title="重新测试（工作人员专用）"
+        aria-label="重新测试"
+      >
+        <RotateCcw className="w-4 h-4 text-slate-400" />
+      </button>
     </div>
   );
 }
