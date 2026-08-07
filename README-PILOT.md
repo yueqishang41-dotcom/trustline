@@ -104,11 +104,25 @@ https://你的站点.netlify.app/.netlify/functions/pilot-export?token=你的PIL
 
 | 链接 | 得到什么 |
 |------|---------|
-| `…/pilot-export?token=…` | 宽表 CSV：每人一行，含核心对齐字段 + A/B 逐题得分与作答 + 全量行为日志（可直接用 Excel/SPSS 打开） |
+| `…/pilot-export?token=…` | 宽表 CSV：每人一行，含核心对齐字段 + 模块A逐题得分/动作标志/**参考答稿/AI初稿/被试最终文本** + 模块B逐题 + 全量行为日志（可直接用 Excel/SPSS 打开） |
 | `…/pilot-export?format=json&token=…` | 完整 JSON 数组（最高保真，供 R / Python / SPSS 深加工） |
 
 > 若未设置 `PILOT_EXPORT_TOKEN`，导出链接无需 `?token=`（不建议在生产收集数据时省略）。
 > 数据存在 Netlify Blobs，可随时重复导出，不会丢。
+
+**5. 人工依据 Rubric 打分（ICC 一致性检验）**
+
+CSV 宽表已为模块 A 每题内置人工打分所需全部要素，抽 20% 样本可直接人工阅卷：
+
+| 每列组 | 内容 |
+|--------|------|
+| `{题号}__answer` | 参考答稿（正确输出，判 correct 维度的标准） |
+| `{题号}__draft` | AI 初稿（被试拿到的原文） |
+| `{题号}__final_text` | **被试最终提交文本全文**（人工阅读打分的核心） |
+| `{题号}__edit` / `act_evidence` / `act_template` / `act_regen` | 行为动作标志（编辑/查材料/看规范/微调），用于判 evidence/compliance 维度 |
+
+人工对每份样本按 Rubric 打分后，与 CSV 中 AI 的逐题分（`{题号}__correctness` 等）做 ICC 一致性分析。
+> JSON 导出中也含完整 `moduleA.responses[].editedText`（每份原始作答），可作为人工打分的原始凭证。
 
 ### 端点格式要求
 

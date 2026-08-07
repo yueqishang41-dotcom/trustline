@@ -2,7 +2,9 @@
  * 预实验数据导出（Netlify Function）。
  *
  * 把 pilot-collect 收集的全部数据导出：
- *   - 默认 /  ?format=csv  → 宽表 CSV（每人一行，含核心对齐字段 + 逐题得分/作答 + 全量行为日志）
+ *   - 默认 /  ?format=csv  → 宽表 CSV（每人一行）
+ *       含：核心对齐字段 + 模块A逐题得分 + 行为动作标志 + 参考答稿/AI初稿/被试最终文本 + 模块B逐题 + 全量行为日志
+ *       可直接作为「人工依据 Rubric 打分」的表格（含 final_text 全文，抽 20% 样本算 AI-人工 ICC）。
  *   -      ?format=json   → 完整 JSON 数组（最高保真，供 R/Python/SPSS 深入分析）
  *
  * 访问示例：
@@ -106,10 +108,12 @@ function buildWideCSV(payloads) {
   const aIdList = [...aIds].sort((x, y) => idSortKey(x).localeCompare(idSortKey(y)));
   const bIdList = [...bIds].sort((x, y) => idSortKey(x).localeCompare(idSortKey(y)));
 
+  // 模块 A 每题：AI 得分(5) + 行为动作标志(4) + 参考答稿 / AI初稿 / 被试最终文本
   const aHeaders = [];
   for (const id of aIdList) {
     for (const h of ['total', 'correctness', 'evidence', 'compliance', 'resource']) aHeaders.push(`${id}__${h}`);
-    aHeaders.push(`${id}__final_len`, `${id}__edit`);
+    for (const h of ['edit', 'act_evidence', 'act_template', 'act_regen']) aHeaders.push(`${id}__${h}`);
+    aHeaders.push(`${id}__answer`, `${id}__draft`, `${id}__final_text`);
   }
   const bHeaders = [];
   for (const id of bIdList) bHeaders.push(`${id}__score`, `${id}__choice`, `${id}__dimension`);
@@ -126,6 +130,8 @@ function buildWideCSV(payloads) {
     for (const qs of (s.bQuestionScores || [])) bScoreMap[qs.id] = qs;
     const aRespMap = p.moduleA?.responses || {};
     const bRespMap = p.moduleB?.responses || {};
+    const aInfoMap = {};
+    for (const q of (p.moduleA?.questionsInfo || [])) aInfoMap[q.id] = q;
 
     const row = [
       p.subjectId ?? '', p.name ?? '', p.role ?? '',
@@ -145,9 +151,16 @@ function buildWideCSV(payloads) {
       } else {
         row.push('', '', '', '', '');
       }
-      const resp = aRespMap[id];
-      const finalText = (resp && resp.editedText) || '';
-      row.push(finalText.length, resp?.actionsUsed?.editPerformed ? 1 : 0);
+      const resp = aRespMap[id] || {};
+      const acts = resp.actionsUsed || {};
+      row.push(acts.editPerformed ? 1 : 0);
+      row.push(acts.viewEvidence ? 1 : 0);
+      row.push(acts.viewTemplate ? 1 : 0);
+      row.push(acts.regenerate ? 1 : 0);
+      const info = aInfoMap[id] || {};
+      row.push(info.correctOutput ?? '');       // 参考答稿（人工打分依据）
+      row.push(info.aiDraft ?? '');             // AI 初稿（被试拿到手的内容）
+      row.push(resp.editedText ?? '');          // 被试最终提交文本（final_text）
     }
 
     for (const id of bIdList) {
