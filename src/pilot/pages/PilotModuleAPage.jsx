@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FileText, Clock, RefreshCw, Send, CheckCircle, Info, BookOpen } from 'lucide-react';
+import { FileText, Clock, RefreshCw, Send, CheckCircle, Info, BookOpen, RotateCw } from 'lucide-react';
 import { usePilotState, usePilotActions } from '../pilotStore';
 import PilotConfirmModal from '../components/PilotConfirmModal';
 
@@ -24,9 +24,11 @@ export default function PilotModuleAPage() {
   const [text, setText] = useState('');
   const [showTemplate, setShowTemplate] = useState(false);
   const [cd, setCd] = useState(1500);
+  const [promptInput, setPromptInput] = useState('');
+  const [showPrompt, setShowPrompt] = useState(false);
 
   // 二次确认弹窗状态
-  const [pendingAction, setPendingAction] = useState(null); // { type: 'evidence' | 'template', cost }
+  const [pendingAction, setPendingAction] = useState(null); // { type: 'evidence' | 'template' | 'regenerate', cost }
 
   const q = moduleAQuestions && moduleAQuestions[moduleACurrentIndex];
 
@@ -39,6 +41,8 @@ export default function PilotModuleAPage() {
     const orig = clean(q.aiDraft || '');
     setText(moduleAResponses[q.id]?.editedText || orig);
     setShowTemplate(false);
+    setShowPrompt(false);
+    setPromptInput('');
     if (!paidForRef.current[q.id]) paidForRef.current[q.id] = { template: false, evidence: false };
     questionStartRef.current = Date.now();
   }, [moduleACurrentIndex, q?.id]);
@@ -75,6 +79,9 @@ export default function PilotModuleAPage() {
       a.consumeEnergy(2, 'view_template', q.id);
       setShowTemplate(true);
       paidForRef.current[q.id].template = true;
+    } else if (type === 'regenerate') {
+      a.consumeEnergy(1, 'regenerate_prompt', q.id);
+      setShowPrompt(true);
     }
     setPendingAction(null);
   };
@@ -94,6 +101,76 @@ export default function PilotModuleAPage() {
     if (energyPoints >= 2) setPendingAction({ type: 'template', cost: 2 }); // 首次：二次确认
   };
 
+  // ---- 微调 Prompt（1点）：输入新约束，让 AI 基于当前内容重新生成 ----
+  const onRegen = () => {
+    if (showPrompt) { setShowPrompt(false); return; }
+    if (energyPoints >= 1) setPendingAction({ type: 'regenerate', cost: 1 }); // 首次：二次确认
+  };
+
+  const applyPrompt = async () => {
+    if (!promptInput.trim()) return;
+
+    // 微调请求：严格基于当前文本框内容（含已手动编辑部分）修改
+    // 仅当「本题已付费解锁工作规范」且「提示语明确提到'规范'」同时满足时，
+    // 才将本题工作规范携带给 AI 作为修改依据；否则只按提示语修改，不透露规范内容。
+    const currentText = text.trim();
+    const guideline = (q.guidelines || '').trim();
+    const unlockedGuideline = paidForRef.current[q.id]?.template === true; // 花过2点解锁本题规范
+    const mentionsGuideline = /规范/.test(promptInput);                    // 提示语提到"规范"
+    const useGuideline = unlockedGuideline && mentionsGuideline;
+
+    const blocks = [
+      '你是一位专业的职场AI助理。请在一份工作文档的当前内容基础上按要求修改，直接输出修改后的完整文档。',
+      '',
+    ];
+    if (useGuideline) {
+      blocks.push(
+        '【工作规范】',
+        guideline || '（本题无特殊规范，请保持专业、简洁、准确。）',
+        '',
+      );
+    }
+    blocks.push(
+      '【当前文档】',
+      '"""',
+      currentText || orig,
+      '"""',
+      '',
+      `【修改要求】${promptInput}`,
+      '',
+      '要求：严格基于上述当前文档内容进行修改，完整保留我已手动编辑的部分，不得丢弃或另起炉灶生成与当前内容无关的版本。',
+    );
+    const userContent = blocks.join('\n');
+
+    // 调用 DeepSeek API 代理（与生产版一致，走 /api/chat → Netlify Function）
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: userContent }] }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setText(data.content);
+        setShowPrompt(false);
+        setPromptInput('');
+        return;
+      }
+
+      let errMsg = `API 请求失败（状态码 ${res.status}）`;
+      try {
+        const errData = await res.json();
+        if (errData?.error) errMsg = `AI 服务出错：${errData.error}`;
+      } catch (_) {}
+      window.alert(errMsg);
+      return;
+    } catch (e) {
+      window.alert(`AI 服务连接失败：${e.message || '网络错误'}`);
+      return;
+    }
+  };
+
   const onSubmit = () => {
     a.updateModuleAResponse(q.id, {
       editedText: text,
@@ -101,7 +178,7 @@ export default function PilotModuleAPage() {
       actionsUsed: {
         viewEvidence: paidForRef.current[q.id]?.evidence || false,
         viewTemplate: paidForRef.current[q.id]?.template || false,
-        regenerate: false,
+        regenerate: showPrompt, // 是否使用过"微调 Prompt"
         editPerformed: text !== orig,
       },
       finalText: text,
@@ -179,12 +256,28 @@ export default function PilotModuleAPage() {
               />
             </div>
 
+            {/* 微调 Prompt 输入框 */}
+            {showPrompt && (
+              <div className="flex items-center gap-2 bg-amber-50 rounded-lg px-4 py-2.5 border border-amber-200">
+                <input
+                  type="text" value={promptInput} onChange={(e) => setPromptInput(e.target.value)}
+                  placeholder="输入新约束条件，如：语气改为正式..."
+                  className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
+                  onKeyDown={(e) => { if (e.key === 'Enter') applyPrompt(); }}
+                />
+                <button onClick={applyPrompt}
+                  className="px-4 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 font-medium">应用</button>
+              </div>
+            )}
+
             {/* Action buttons */}
-            <div className="grid grid-cols-3 gap-2 pt-3 border-t border-slate-100">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-slate-100">
               <ActionBtn icon={<BookOpen className="w-5 h-5" />} label="查看工作规范" desc="解锁（消耗 2 点精力）" cost={2}
                 active={showTemplate} disabled={!templatePaid && energyPoints < 2} onClick={onShowTemplate} color="blue" />
               <ActionBtn icon={<FileText className="w-5 h-5" />} label="解锁材料包" desc="消耗 3 点精力" cost={3}
                 active={evidenceUnlocked} disabled={!evidencePaid && energyPoints < 3} onClick={onEvidence} color="violet" />
+              <ActionBtn icon={<RotateCw className="w-5 h-5" />} label="微调 Prompt" desc="输入新约束重生成" cost={1}
+                active={showPrompt} disabled={!showPrompt && energyPoints < 1} onClick={onRegen} color="amber" />
               <ActionBtn icon={<Send className="w-5 h-5" />} label="提交本题" desc="进入下一题" cost={0}
                 active={false} disabled={false} onClick={onSubmit} color="emerald" />
             </div>
@@ -243,7 +336,7 @@ export default function PilotModuleAPage() {
         open={!!pendingAction}
         cost={pendingAction?.cost || 0}
         energy={energyPoints}
-        label={pendingAction?.type === 'evidence' ? '解锁材料包' : '查看工作规范'}
+        label={pendingAction?.type === 'evidence' ? '解锁材料包' : pendingAction?.type === 'template' ? '查看工作规范' : '微调 Prompt'}
         onConfirm={confirmPay}
         onCancel={cancelPay}
       />
