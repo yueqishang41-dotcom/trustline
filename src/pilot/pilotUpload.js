@@ -18,6 +18,8 @@ import { buildCSV, buildPayload } from './pilotExport';
 
 const ENDPOINT = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PILOT_DATA_ENDPOINT) || '';
 const FEISHU_KEYWORD = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PILOT_FEISHU_KEYWORD) || '汇报';
+// Netlify 收集器可选鉴权 token（需与服务器端 PILOT_COLLECT_TOKEN 一致）
+const COLLECT_TOKEN = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PILOT_COLLECT_TOKEN) || '';
 
 const MAX_ATTEMPTS = 3;
 
@@ -141,13 +143,15 @@ export async function uploadResults(results) {
     return r;
   }
 
-  // 通用 JSON 端点：保持原有行为
+  // 通用 JSON 端点（含 Netlify 收集器）：保持原有行为，可选携带收集器 token
   let lastErr = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (COLLECT_TOKEN) headers['x-collect-token'] = COLLECT_TOKEN;
       const res = await fetch(ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       });
       if (res.ok) {

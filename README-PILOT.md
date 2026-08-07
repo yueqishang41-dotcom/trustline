@@ -71,6 +71,45 @@ Value: https://你的接收端点地址
 
 Site settings → Environment variables 添加同名变量。
 
+### Netlify 收集器（推荐，完整数据自动入库）
+
+预实验完整数据（含**逐题作答、逐题得分、全量行为日志**）默认用 Netlify 函数收集，
+存进免费云存储 Netlify Blobs，之后一键导出 CSV / JSON 用于统计分析。飞书消息保留作实时监控。
+
+**1. 环境变量（Netlify → Site settings → Environment variables）**
+
+| Key | Value | 说明 |
+|-----|-------|------|
+| `VITE_PILOT_DATA_ENDPOINT` | `/.netlify/functions/pilot-collect` | 前端把完整 Payload 发给收集器 |
+| `PILOT_FEISHU_WEBHOOK` | `https://open.feishu.cn/open-apis/bot/v2/hook/…` | 服务器端转发飞书摘要（监控） |
+| `PILOT_FEISHU_KEYWORD` | `汇报`（可选，默认值即 `汇报`） | 与飞书机器人自定义关键词一致 |
+| `PILOT_EXPORT_TOKEN` | 自定一串字符（**强烈建议设置**） | 保护导出接口，下载时需带 `?token=` |
+| `PILOT_COLLECT_TOKEN` | 自定一串字符（可选） | 防陌生人刷数据；设置后须同步设置 `VITE_PILOT_COLLECT_TOKEN` 为同值 |
+
+> `PILOT_` 开头的变量只在服务器端使用，不会泄露到浏览器；`VITE_` 开头会被打进构建产物。
+
+**2. 重新部署**
+
+配完变量后到 Deploys → **Deploy site → Clear cache and deploy site**。
+
+**3. 验证**
+
+走完一遍预实验，飞书应收到 `【汇报】…` 摘要（说明已存储成功）。可在浏览器地址栏直接打开导出接口确认数据已入库：
+
+```
+https://你的站点.netlify.app/.netlify/functions/pilot-export?token=你的PILOT_EXPORT_TOKEN
+```
+
+**4. 导出数据**
+
+| 链接 | 得到什么 |
+|------|---------|
+| `…/pilot-export?token=…` | 宽表 CSV：每人一行，含核心对齐字段 + A/B 逐题得分与作答 + 全量行为日志（可直接用 Excel/SPSS 打开） |
+| `…/pilot-export?format=json&token=…` | 完整 JSON 数组（最高保真，供 R / Python / SPSS 深加工） |
+
+> 若未设置 `PILOT_EXPORT_TOKEN`，导出链接无需 `?token=`（不建议在生产收集数据时省略）。
+> 数据存在 Netlify Blobs，可随时重复导出，不会丢。
+
 ### 端点格式要求
 
 系统会向该地址发送 `POST` 请求，`Content-Type: application/json`，
