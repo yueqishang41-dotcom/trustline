@@ -10,11 +10,14 @@
  *   https://你的站点.netlify.app/.netlify/functions/pilot-export?format=json
  * 若设置了环境变量 PILOT_EXPORT_TOKEN，访问需加 ?token=你的TOKEN
  */
-import { getStore } from '@netlify/blobs';
+import { connectLambda, getStore } from '@netlify/blobs';
 
 const STORE = 'pilot-data';
 
 export async function handler(event) {
+  // v1 函数需手动接线 Netlify Blobs 环境上下文（从 event.blobs + 请求头注入）
+  try { connectLambda(event); } catch (e) { /* 无 blobs 上下文时忽略，后续会明确报错 */ }
+
   try {
     // 鉴权：PILOT_EXPORT_TOKEN 设置后必须携带正确 token 才能下载
     const exportToken = process.env.PILOT_EXPORT_TOKEN;

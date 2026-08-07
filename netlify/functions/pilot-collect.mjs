@@ -8,11 +8,14 @@
  *
  * 前端端点配置：VITE_PILOT_DATA_ENDPOINT=/.netlify/functions/pilot-collect
  */
-import { getStore } from '@netlify/blobs';
+import { connectLambda, getStore } from '@netlify/blobs';
 
 const STORE = 'pilot-data';
 
 export async function handler(event) {
+  // v1 函数需手动接线 Netlify Blobs 环境上下文（从 event.blobs + 请求头注入）
+  try { connectLambda(event); } catch (e) { /* 无 blobs 上下文时忽略，后续会明确报错 */ }
+
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ ok: false, error: 'Method not allowed' }) };
   }
