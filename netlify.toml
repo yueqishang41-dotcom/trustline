@@ -8,6 +8,12 @@
   to = "/.netlify/functions/chat"
   status = 200
 
+# 预实验版独立页面：按静态文件直接提供服务，不被 SPA 兜底重写
+[[redirects]]
+  from = "/pilot.html"
+  to = "/pilot.html"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
