@@ -6,7 +6,8 @@ import { uploadResults } from '../pilotUpload';
 /**
  * 预实验完成页：极简感恩页面。
  * 完全屏蔽分数明细、三大维度、画像评语（防泄题/心态波动）。
- * 进入时后台静默上传数据（失败自动重试 + 防丢下载），界面无任何报错提示。
+ * 进入时后台静默上传数据（失败自动重试 + localStorage 暂存补传，被试无感），
+ * 界面无任何报错提示，也不触发任何浏览器下载。
  */
 export default function PilotCompletionPage() {
   const state = usePilotState();
@@ -22,7 +23,7 @@ export default function PilotCompletionPage() {
     // 本地留底（备份，不展示）
     try { localStorage.setItem('trustline_pilot_final', JSON.stringify(results)); } catch (e) {}
 
-    // 云端静默上传（内部含重试 + 防丢下载），完成后仅切换图标状态，不显示失败信息
+    // 云端静默上传（内部含重试 + localStorage 暂存补传），完成后仅切换图标状态，不显示失败信息
     uploadResults(results).then(() => {
       setStatus('done');
     }).catch(() => {

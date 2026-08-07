@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useReducer, useCallback, useRef, useEffect } from 'react';
 import { buildFixedPaper } from './pilotPaper';
+import { flushPendingUploads } from './pilotUpload';
 
 const STORAGE_KEY = 'trustline_pilot_state';
 
@@ -198,6 +199,11 @@ export function PilotProvider({ children }) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
     }
   }, [state]);
+
+  // ===== 自动补传上次失败的云端上传（静默，被试无感） =====
+  useEffect(() => {
+    flushPendingUploads().catch(() => {});
+  }, []);
 
   // ===== 防作弊监控 1：切屏/焦点丢失 =====
   useEffect(() => {

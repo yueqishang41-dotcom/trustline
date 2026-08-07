@@ -120,8 +120,8 @@ Body 为完整 Payload（见下），你的接收端需能接收 JSON POST。
 - **Formspree**（`https://formspree.io/f/你的表单ID`）
 - **自定义后端接口**（任一可接收 JSON POST 的 URL）
 
-> **未配置端点时**：系统跳过上传，自动触发"防丢下载"（后台静默下载 CSV + JSON 备份文件），
-> 数据仍 100% 可回收，不会报错。
+> **未配置端点时**：系统跳过上传。上传失败时，数据会**暂存在被试浏览器 localStorage**，
+> 下次打开页面自动补传（被试完全无感）。**被试端绝不触发任何浏览器下载**。
 
 ### 飞书 Webhook（自动兼容）
 
@@ -156,7 +156,7 @@ Body 为完整 Payload（见下），你的接收端需能接收 JSON POST。
 | 精力扣除二次确认弹窗（防误触） | `src/pilot/components/PilotConfirmModal.jsx` |
 | 极简指导语 + 模块 B 过渡页 | `src/pilot/pages/` |
 | 切屏监控（page_blur）+ 大段粘贴监控（bulk_paste） | `src/pilot/pilotStore.jsx` |
-| 云端静默上传（3 次重试 + 防丢下载） | `src/pilot/pilotUpload.js` |
+| 云端静默上传（3 次重试 + localStorage 暂存自动补传，无下载） | `src/pilot/pilotUpload.js` |
 | 极简感恩完成页（屏蔽分数/维度/画像） | `src/pilot/pages/PilotCompletionPage.jsx` |
 | 对齐字段导出（Form_Type / Blur/Paste 计数 / 全量日志） | `src/pilot/pilotExport.js` |
 
