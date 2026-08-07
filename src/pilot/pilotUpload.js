@@ -5,10 +5,21 @@
  *   - 本地：新建 .env.local 写入  VITE_PILOT_DATA_ENDPOINT=你的端点URL
  *   - Vercel / Netlify：在平台 Environment Variables 里配置同名变量
  * 未配置端点时：跳过上传，仅生成备份文件（自动下载），数据仍 100% 可回收。
+ *
+ * ── 飞书 Webhook 兼容 ─────────────────────────────────────────────
+ * 当 VITE_PILOT_DATA_ENDPOINT 指向 open.feishu.cn（自定义机器人 Webhook）时，
+ * 自动切换为飞书消息格式 {msg_type, content}（飞书不接受任意 JSON）。
+ * 若在飞书机器人里开启了「自定义关键词」安全校验，每条消息正文必须包含该关键词：
+ *   默认关键词为「汇报」，可用环境变量 VITE_PILOT_FEISHU_KEYWORD 覆盖（与飞书设置保持一致）。
+ * 消息内容 = 精简摘要 + 完整 CSV（过长自动切分成多条，每条都带关键词）。
+ * 全部发送失败时仍会触发「防丢下载」兜底。
  */
 import { buildCSV, buildPayload } from './pilotExport';
 
 const ENDPOINT = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PILOT_DATA_ENDPOINT) || '';
+const FEISHU_KEYWORD = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PILOT_FEISHU_KEYWORD) || '汇报';
+
+const MAX_ATTEMPTS = 3;
 
 export function getEndpoint() {
   return ENDPOINT;
@@ -19,6 +30,95 @@ export function getEndpoint() {
  */
 export function toCSV(results) {
   return buildCSV(results);
+}
+
+/** 判断是否为飞书自定义机器人 Webhook */
+function isFeishuEndpoint(url) {
+  try {
+    const u = new URL(url);
+    return /(^|\.)feishu\.cn$/i.test(u.hostname) || /\/bot\/v2\/hook\//i.test(u.pathname);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** 组装飞书文本消息正文：关键词 + 精简摘要 + 完整 CSV */
+function buildFeishuMessage(payload) {
+  const dims = payload.scores?.dimensions || {};
+  const lines = [
+    `【${FEISHU_KEYWORD}】`,
+    `被试ID: ${payload.subjectId || ''}`,
+    `姓名: ${payload.name || ''}`,
+    `角色: ${payload.role || ''}`,
+    `卷型: ${payload.formLabel || ('Form_' + (payload.formType || 'A'))}`,
+    `开始时间: ${payload.startTime || ''}`,
+    `结束时间: ${payload.endTime || ''}`,
+    `总耗时(秒): ${payload.timeUsedSec ?? ''}`,
+    `剩余精力: ${payload.scores?.energyRemaining ?? ''}`,
+    `切屏次数: ${payload.pageBlurCount ?? 0}`,
+    `大段粘贴次数: ${payload.bulkPasteCount ?? 0}`,
+    `A卷原始分: ${payload.scores?.scoreA ?? ''}`,
+    `B卷原始分: ${payload.scores?.scoreB ?? ''}`,
+    `RES分数: ${payload.scores?.resScore ?? ''}`,
+    `最终总分: ${payload.scores?.totalScore ?? ''}`,
+    `校准依赖维度: ${dims.calibratedReliance ?? ''}`,
+    `核验监督维度: ${dims.verificationSupervision ?? ''}`,
+    `合规边界维度: ${dims.complianceBoundary ?? ''}`,
+    '',
+    '===== CSV 完整数据（含行为日志） =====',
+    payload.csvText || '',
+  ];
+  return lines.join('\n');
+}
+
+/** 按最大长度切分；续段每条都补上关键词，满足飞书「自定义关键词」逐条校验 */
+function chunkFeishuText(text, maxLen = 28000) {
+  const chunks = [];
+  let rest = text;
+  while (rest.length > maxLen) {
+    let cut = rest.lastIndexOf('\n', maxLen);
+    if (cut < maxLen * 0.5) cut = maxLen;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  if (rest) chunks.push(rest);
+  return chunks.map((c, i) => (i === 0 ? c : `【${FEISHU_KEYWORD}】(续)\n${c}`));
+}
+
+/** 发送一条飞书文本消息，失败重试 MAX_ATTEMPTS 次 */
+async function postFeishuText(chunk) {
+  const body = JSON.stringify({ msg_type: 'text', content: { text: chunk } });
+  let lastErr = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      if (res.ok) return null;
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      lastErr = e;
+    }
+    if (attempt < MAX_ATTEMPTS) {
+      await sleep(1200 * attempt);
+    }
+  }
+  return lastErr;
+}
+
+/** 飞书路径：摘要 + CSV 全文，分批发送 */
+async function uploadFeishu(payload) {
+  const text = buildFeishuMessage(payload);
+  const chunks = chunkFeishuText(text);
+  let attempts = 0;
+  for (const chunk of chunks) {
+    const err = await postFeishuText(chunk);
+    attempts += MAX_ATTEMPTS;
+    if (err) return { ok: false, attempts, backup: false, reason: err.message };
+  }
+  return { ok: true, attempts, backup: false };
 }
 
 /**
@@ -34,7 +134,14 @@ export async function uploadResults(results) {
 
   const payload = buildPayload(results);
 
-  const MAX_ATTEMPTS = 3;
+  // 飞书 Webhook：走飞书消息格式
+  if (isFeishuEndpoint(ENDPOINT)) {
+    const r = await uploadFeishu(payload);
+    if (!r.ok) triggerBackupDownload(results);
+    return r;
+  }
+
+  // 通用 JSON 端点：保持原有行为
   let lastErr = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {

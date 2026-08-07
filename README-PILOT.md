@@ -77,12 +77,32 @@ Site settings → Environment variables 添加同名变量。
 Body 为完整 Payload（见下），你的接收端需能接收 JSON POST。
 
 支持以下常见端点：
-- **飞书 Webhook**（选择"自定义机器人"→ 加签需自行处理）
+- **飞书 Webhook**（`https://open.feishu.cn/open-apis/bot/v2/hook/你的TOKEN`）— 自动兼容，见下
 - **Formspree**（`https://formspree.io/f/你的表单ID`）
 - **自定义后端接口**（任一可接收 JSON POST 的 URL）
 
 > **未配置端点时**：系统跳过上传，自动触发"防丢下载"（后台静默下载 CSV + JSON 备份文件），
 > 数据仍 100% 可回收，不会报错。
+
+### 飞书 Webhook（自动兼容）
+
+当 `VITE_PILOT_DATA_ENDPOINT` 指向 `open.feishu.cn` 时，代码自动把 Payload
+封装成飞书消息格式（`{msg_type, content}`），内容为 **精简摘要 + 完整 CSV**，
+过长自动分条发送，无需任何代码改动。
+
+飞书机器人侧若开启「自定义关键词」安全校验，**每条消息正文必须包含该关键词**：
+
+| 项目 | 值 |
+|------|-----|
+| 默认关键词 | `汇报`（消息正文以 `【汇报】` 开头） |
+| 覆盖关键词 | 环境变量 `VITE_PILOT_FEISHU_KEYWORD`（须与飞书机器人设置一致） |
+
+> 建议飞书侧选择「自定义关键词」而非「加签/IP白名单」：关键词最省事，
+> 且系统已默认带上；「加签」需额外签名逻辑，「IP 白名单」因被试 IP 不固定不适用。
+
+---
+
+## 三、预实验版功能清单
 
 ---
 
