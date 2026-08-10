@@ -142,33 +142,45 @@ export default function PilotModuleAPage() {
     );
     const userContent = blocks.join('\n');
 
-    // 调用 DeepSeek API 代理（与生产版一致，走 /api/chat → Netlify Function）
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [{ role: 'user', content: userContent }] }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setText(data.content);
-        setShowPrompt(false);
-        setPromptInput('');
+    // 调用 DeepSeek API 代理（走 /api/chat → Netlify Function），自动重试一次
+    let res = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: [{ role: 'user', content: userContent }] }),
+        });
+      } catch (e) {
+        // 网络层失败（含浏览器 fetch 超时）→ 重试一次
+        if (attempt === 1) { await new Promise((r) => setTimeout(r, 1000)); continue; }
+        window.alert('AI 服务连接失败，请稍后重试。若多次失败，您可以直接手动编辑文本。');
         return;
       }
+      if (res.ok) break;
+      // 网关错误（502/503/504）→ 重试一次；其他错误直接结束
+      if ([502, 503, 504].includes(res.status) && attempt === 1) {
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      break;
+    }
 
-      let errMsg = `API 请求失败（状态码 ${res.status}）`;
-      try {
-        const errData = await res.json();
-        if (errData?.error) errMsg = `AI 服务出错：${errData.error}`;
-      } catch (_) {}
-      window.alert(errMsg);
-      return;
-    } catch (e) {
-      window.alert(`AI 服务连接失败：${e.message || '网络错误'}`);
+    if (res && res.ok) {
+      const data = await res.json();
+      setText(data.content);
+      setShowPrompt(false);
+      setPromptInput('');
       return;
     }
+
+    // 两次都失败 → 友好提示（不暴露内部细节）
+    let errMsg = `AI 服务暂不可用（${res ? `状态码 ${res.status}` : '网络错误'}），请稍后重试或直接手动编辑文本。`;
+    try {
+      const errData = await (res && res.json());
+      if (errData?.error) errMsg = `AI 服务暂不可用：${errData.error}`;
+    } catch (_) {}
+    window.alert(errMsg);
   };
 
   const onSubmit = () => {
