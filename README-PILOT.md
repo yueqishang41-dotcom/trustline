@@ -124,6 +124,19 @@ CSV 宽表已为模块 A 每题内置人工打分所需全部要素，抽 20% �
 人工对每份样本按 Rubric 打分后，与 CSV 中 AI 的逐题分（`{题号}__correctness` 等）做 ICC 一致性分析。
 > JSON 导出中也含完整 `moduleA.responses[].editedText`（每份原始作答），可作为人工打分的原始凭证。
 
+**⚠ 历史数据 act_regen 为 0 的处理（2026-08-11 前的数据）**
+
+旧版本用「微调框是否打开」记录 `act_regen`，导致能量扣了但该列全为 0。
+真实使用微调的题目可从全量行为日志反查（`regenerate_prompt` 条目含 `questionId`）：
+
+```bash
+python tools/recover_regen_usage.py pilot-data.json          # 完整 JSON 导出
+python tools/recover_regen_usage.py pilot-data.csv           # 或宽表 CSV（自动解析 Behavioral_Logs_JSON 列）
+```
+
+输出每个被试实际使用 AI 微调的题目清单 + 能量校验，可与宽表按 `Subject_ID` 对齐合并进分析。
+（该 bug 已于 2026-08-11 修复：`act_regen` 改为以每题扣费记录为准，预实验版与生产版同步修复。）
+
 ### 端点格式要求
 
 系统会向该地址发送 `POST` 请求，`Content-Type: application/json`，
