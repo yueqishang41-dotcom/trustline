@@ -43,7 +43,7 @@ export default function PilotModuleAPage() {
     setShowTemplate(false);
     setShowPrompt(false);
     setPromptInput('');
-    if (!paidForRef.current[q.id]) paidForRef.current[q.id] = { template: false, evidence: false };
+    if (!paidForRef.current[q.id]) paidForRef.current[q.id] = { template: false, evidence: false, regenerate: false };
     questionStartRef.current = Date.now();
   }, [moduleACurrentIndex, q?.id]);
 
@@ -81,6 +81,7 @@ export default function PilotModuleAPage() {
       paidForRef.current[q.id].template = true;
     } else if (type === 'regenerate') {
       a.consumeEnergy(1, 'regenerate_prompt', q.id);
+      paidForRef.current[q.id].regenerate = true; // 记录本题用过微调（能量已扣即视为已用）
       setShowPrompt(true);
     }
     setPendingAction(null);
@@ -104,6 +105,7 @@ export default function PilotModuleAPage() {
   // ---- 微调 Prompt（1点）：输入新约束，让 AI 基于当前内容重新生成 ----
   const onRegen = () => {
     if (showPrompt) { setShowPrompt(false); return; }
+    if (paidForRef.current[q.id]?.regenerate) { setShowPrompt(true); return; } // 已付费，免费重开
     if (energyPoints >= 1) setPendingAction({ type: 'regenerate', cost: 1 }); // 首次：二次确认
   };
 
@@ -190,7 +192,7 @@ export default function PilotModuleAPage() {
       actionsUsed: {
         viewEvidence: paidForRef.current[q.id]?.evidence || false,
         viewTemplate: paidForRef.current[q.id]?.template || false,
-        regenerate: showPrompt, // 是否使用过"微调 Prompt"
+        regenerate: paidForRef.current[q.id]?.regenerate || false, // 是否使用过"微调 Prompt"（以扣费记录为准）
         editPerformed: text !== orig,
       },
       finalText: text,
