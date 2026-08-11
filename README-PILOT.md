@@ -127,15 +127,33 @@ CSV 宽表已为模块 A 每题内置人工打分所需全部要素，抽 20% �
 **⚠ 历史数据 act_regen 为 0 的处理（2026-08-11 前的数据）**
 
 旧版本用「微调框是否打开」记录 `act_regen`，导致能量扣了但该列全为 0。
-真实使用微调的题目可从全量行为日志反查（`regenerate_prompt` 条目含 `questionId`）：
+真实使用微调的题目可从全量行为日志反查（`regenerate_prompt` 条目含 `questionId`）。
+
+**一键补回（推荐，直接产出修正后的分析表）：**
 
 ```bash
-python tools/recover_regen_usage.py pilot-data.json          # 完整 JSON 导出
-python tools/recover_regen_usage.py pilot-data.csv           # 或宽表 CSV（自动解析 Behavioral_Logs_JSON 列）
+# ① 下载当前导出（浏览器打开导出链接保存）
+#    https://你的站点.netlify.app/.netlify/functions/pilot-export?token=你的TOKEN
+#    以及 ?format=json 那份
+# ② 补回 act_regen（输出 <原文件>-fixed.csv，其余列原样保留）
+python tools/fix_act_regen.py pilot-data.csv                  # → pilot-data-fixed.csv
+python tools/fix_act_regen.py pilot-data.csv -o 修正后.csv    # 或指定输出文件名
+#    也支持直接修 JSON 导出（重写 actionsUsed.regenerate）：
+python tools/fix_act_regen.py pilot-data.json
 ```
 
-输出每个被试实际使用 AI 微调的题目清单 + 能量校验，可与宽表按 `Subject_ID` 对齐合并进分析。
-（该 bug 已于 2026-08-11 修复：`act_regen` 改为以每题扣费记录为准，预实验版与生产版同步修复。）
+**核对 / 逐人排查（可选）：**
+
+```bash
+python tools/recover_regen_usage.py pilot-data.json   # 打印每个被试实际用微调的题目清单 + 能量校验
+```
+
+> 说明：能量扣费日志（`regenerate_prompt`）从来都是完整保存的，所以旧数据
+> 一定能恢复。只有 `act_regen` 列受影响；`act_evidence` / `act_template` 旧数据本来就对。
+> 恢复出的标记语义 = 该题扣过微调能量 = 与被试总精力消耗完全对齐（2026-08-11 已确认）。
+
+**新数据（修复后）：** `act_regen` 以每题扣费记录为准，无需任何后处理。
+（该 bug 已于 2026-08-11 修复，预实验版与生产版同步推送。）
 
 ### 端点格式要求
 
