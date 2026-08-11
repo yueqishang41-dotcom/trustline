@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useReducer, useCallback, useRef, useEffect } from 'react';
 import { buildFixedPaper } from './pilotPaper';
 import { flushPendingUploads } from './pilotUpload';
+import { isPilotClosed } from './pilotGate';
 
 const STORAGE_KEY = 'trustline_pilot_state';
 
@@ -71,6 +72,10 @@ function testReducer(state, action) {
       return { ...state, subject: action.payload };
 
     case actions.START_TEST: {
+      // 防御：已过关闭时间则拒绝开启新测试（路由层已拦截，此处双保险）
+      if (isPilotClosed()) {
+        return { ...state, behavioralLogs: [...state.behavioralLogs, createLogEntry('test_blocked', '预实验已关闭，拒绝开始')] };
+      }
       const paper = buildFixedPaper(state.formType);
       return {
         ...state,

@@ -1,5 +1,7 @@
 import React from 'react';
 import { PilotProvider, usePilotState } from './pilotStore';
+import { isPilotClosed, PILOT_HARD_CLOSE } from './pilotGate';
+import PilotClosedPage from './pages/PilotClosedPage';
 import PilotSubjectInfoPage from './pages/PilotSubjectInfoPage';
 import PilotInstructionsPage from './pages/PilotInstructionsPage';
 import PilotModuleAPage from './pages/PilotModuleAPage';
@@ -8,8 +10,25 @@ import PilotModuleBPage from './pages/PilotModuleBPage';
 import PilotCompletionPage from './pages/PilotCompletionPage';
 
 function PilotRouter() {
+  // 每 10s 重查一次关闭时间，保证「停在指导页未开始」的人到点也会被拦下
+  const [, setTick] = React.useState(Date.now());
+  React.useEffect(() => {
+    const id = setInterval(() => setTick(Date.now()), 10000);
+    return () => clearInterval(id);
+  }, []);
+
   try {
     const { phase } = usePilotState();
+    // 到关闭时间后的处理：
+    //  - 完成感恩页始终保留（数据照常上传）；
+    //  - 硬关闭（PILOT_HARD_CLOSE=true）：除感恩页外全部显示关闭页（含在测被试，会被截断）；
+    //  - 默认策略：只拦「尚未开始」的人（subject-info / instructions），在测被试允许做完提交。
+    if (isPilotClosed()) {
+      if (phase === 'completion') return <PilotCompletionPage />;
+      if (PILOT_HARD_CLOSE || phase === 'subject-info' || phase === 'instructions') {
+        return <PilotClosedPage />;
+      }
+    }
     switch (phase) {
       case 'subject-info': return <PilotSubjectInfoPage />;
       case 'instructions': return <PilotInstructionsPage />;

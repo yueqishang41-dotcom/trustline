@@ -155,6 +155,28 @@ python tools/recover_regen_usage.py pilot-data.json   # 打印每个被试实际
 **新数据（修复后）：** `act_regen` 以每题扣费记录为准，无需任何后处理。
 （该 bug 已于 2026-08-11 修复，预实验版与生产版同步推送。）
 
+## 五、定时关闭预实验入口
+
+名额已满时可按指定时间自动关闭 `pilot.html` 入口（数据收集器/导出接口不受影响，在测被试数据照常入库）。
+
+**设置关闭时间（二选一）：**
+
+```js
+// src/pilot/pilotGate.js
+export const PILOT_CLOSE_AT = '2026-08-11T23:59:00+08:00'; // 改这一行，push 后自动生效
+```
+
+或配环境变量 `VITE_PILOT_CLOSE_AT`（ISO 时间）+ Clear cache and deploy。设为 `null` 表示不关闭。
+
+**到点后行为：**
+
+| 策略 | 效果 |
+|------|------|
+| 默认（推荐） | 新访客/未开始者看到「预实验已结束」页；已在作答中的被试可做完提交 |
+| 硬关闭（`pilotGate.js` 里 `PILOT_HARD_CLOSE=true`） | 除完成感恩页外全部显示关闭页（在测被试会被截断，未提交数据可能丢失） |
+
+> 关闭只拦测试入口，`.netlify/functions/pilot-collect` 与 `pilot-export` 始终运行。
+
 ### 端点格式要求
 
 系统会向该地址发送 `POST` 请求，`Content-Type: application/json`，
