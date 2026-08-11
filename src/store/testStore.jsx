@@ -19,6 +19,7 @@ const initialState = {
   endTime: null,
   results: null,
   behavioralLogs: [],
+  bulkPasteCount: 0,
 };
 
 const actions = {
@@ -34,6 +35,7 @@ const actions = {
   UPDATE_MODULE_B_RESPONSE: 'UPDATE_MODULE_B_RESPONSE',
   FINISH_TEST: 'FINISH_TEST',
   ADD_LOG: 'ADD_LOG',
+  ADD_BULK_PASTE: 'ADD_BULK_PASTE',
   RESET: 'RESET',
 };
 
@@ -135,6 +137,7 @@ function testReducer(state, action) {
           endTime,
           timeUsedSec: Math.round((new Date(endTime) - new Date(state.startTime)) / 1000),
           energyRemaining: state.energyPoints,
+          bulkPasteCount: state.bulkPasteCount,
           moduleAQuestionsInfo: state.moduleAQuestions,
           moduleBQuestionsInfo: state.moduleBQuestions,
           moduleAResponses: state.moduleAResponses,
@@ -150,6 +153,18 @@ function testReducer(state, action) {
         ...state,
         behavioralLogs: [...state.behavioralLogs, action.payload],
       };
+
+    case actions.ADD_BULK_PASTE: {
+      // 防作弊监控：异常大段粘贴（>100 字符），记录长度并计数
+      return {
+        ...state,
+        bulkPasteCount: state.bulkPasteCount + 1,
+        behavioralLogs: [
+          ...state.behavioralLogs,
+          createLogEntry('bulk_paste_detected', '检测到大段文本粘贴', { length: action.payload }),
+        ],
+      };
+    }
 
     case actions.RESET:
       clearState();
@@ -267,11 +282,17 @@ export function useTestActions() {
     dispatch({ type: actions.RESET });
   }, [dispatch]);
 
+  // 防作弊监控：异常大段粘贴（>100 字符）
+  const addBulkPaste = useCallback((length) => {
+    dispatch({ type: actions.ADD_BULK_PASTE, payload: length });
+  }, [dispatch]);
+
   return {
     setSubject, startTest, setPhase,
     updateModuleAResponse, consumeEnergy,
     setEvidenceUnlocked, setHighlighted,
     updateModuleBResponse,
     goToNextModuleA, goToNextModuleB, finishTest, reset,
+    addBulkPaste,
   };
 }

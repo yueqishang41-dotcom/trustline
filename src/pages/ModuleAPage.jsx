@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FileText, Clock, RotateCw, Send, Eye, Lock, CheckCircle, Info, Search, BookOpen, RefreshCw } from 'lucide-react';
+import { FileText, Clock, RotateCw, Send, Lock, CheckCircle, Info, Search, BookOpen, RefreshCw } from 'lucide-react';
 import { useTestState, useTestActions } from '../store/testStore';
 import EnergyBar from '../components/EnergyBar';
+import ConfirmModal from '../components/ConfirmModal';
 
 function clean(s) {
   if (!s) return '';
@@ -49,6 +50,7 @@ export default function ModuleAPage() {
   const [showPrompt, setShowPrompt] = useState(false);
   const [showTemplate, setShowTemplate] = useState(false);
   const [cd, setCd] = useState(1500);
+  const [pendingAction, setPendingAction] = useState(null); // { type: 'evidence' | 'template' | 'regenerate', cost } 二次确认
 
   const q = moduleAQuestions && moduleAQuestions[moduleACurrentIndex];
 
@@ -117,47 +119,50 @@ export default function ModuleAPage() {
 
   const template = getQuestionGuidelines(q);
 
-  // --- Payment logic: energy consumed ONCE per question ---
+  // --- Payment logic: energy consumed ONCE per question（消耗前二次确认，防误触） ---
   const onEvidence = () => {
-    if (!evidenceUnlocked && !paidForRef.current[q.id]?.evidence && energyPoints >= 3) {
-      // First time: pay and unlock
-      a.consumeEnergy(3, 'view_evidence', q.id);
-      a.setEvidenceUnlocked(true);
-      paidForRef.current[q.id].evidence = true;
-    } else if (!evidenceUnlocked && paidForRef.current[q.id]?.evidence && energyPoints >= 0) {
-      // Already paid, just re-open
-      a.setEvidenceUnlocked(true);
-    } else if (evidenceUnlocked) {
-      a.setEvidenceUnlocked(false);
-    }
+    if (evidenceUnlocked) { a.setEvidenceUnlocked(false); return; }
+    if (paidForRef.current[q.id]?.evidence) { a.setEvidenceUnlocked(true); return; } // 已付费，免费重开
+    if (energyPoints >= 3) setPendingAction({ type: 'evidence', cost: 3 }); // 首次：二次确认
   };
 
   const onShowTemplate = () => {
-    if (!showTemplate) {
-      // Opening template
-      if (!paidForRef.current[q.id]?.template && energyPoints >= 2) {
-        // First time: pay
-        a.consumeEnergy(2, 'view_template', q.id);
-        paidForRef.current[q.id].template = true;
-        setShowTemplate(true);
-      } else if (paidForRef.current[q.id]?.template) {
-        // Already paid, open free
-        setShowTemplate(true);
-      }
-    } else {
-      // Closing template
-      setShowTemplate(false);
-    }
+    if (showTemplate) { setShowTemplate(false); return; }
+    if (paidForRef.current[q.id]?.template) { setShowTemplate(true); return; } // 已付费，免费重开
+    if (energyPoints >= 2) setPendingAction({ type: 'template', cost: 2 }); // 首次：二次确认
   };
 
   const onRegen = () => {
     if (showPrompt) { setShowPrompt(false); return; }
     if (paidForRef.current[q.id]?.regenerate) { setShowPrompt(true); return; } // 已付费，免费重开
-    if (energyPoints >= 1) {
+    if (energyPoints >= 1) setPendingAction({ type: 'regenerate', cost: 1 }); // 首次：二次确认
+  };
+
+  // 二次确认弹窗确认/取消
+  const confirmPay = () => {
+    if (!pendingAction) return;
+    const { type, cost } = pendingAction;
+    if (type === 'evidence') {
+      a.consumeEnergy(3, 'view_evidence', q.id);
+      a.setEvidenceUnlocked(true);
+      paidForRef.current[q.id].evidence = true;
+    } else if (type === 'template') {
+      a.consumeEnergy(2, 'view_template', q.id);
+      setShowTemplate(true);
+      paidForRef.current[q.id].template = true;
+    } else if (type === 'regenerate') {
       a.consumeEnergy(1, 'regenerate_prompt', q.id);
       paidForRef.current[q.id].regenerate = true; // 记录本题用过微调（能量已扣即视为已用）
       setShowPrompt(true);
     }
+    setPendingAction(null);
+  };
+  const cancelPay = () => setPendingAction(null);
+
+  // 防作弊监控：异常大段粘贴（>100 字符）自动记录
+  const onPaste = (e) => {
+    const pasted = (e.clipboardData && e.clipboardData.getData('text')) || '';
+    if (pasted.length > 100) a.addBulkPaste(pasted.length);
   };
 
   const onSubmit = () => {
@@ -210,42 +215,45 @@ export default function ModuleAPage() {
     );
     const userContent = blocks.join('\n');
 
-    // Try to call DeepSeek API proxy
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            { role: 'user', content: userContent },
-          ],
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setText(data.content);
-        setShowPrompt(false);
-        setPromptInput('');
+    // 调用 DeepSeek API 代理（走 /api/chat → Netlify Function），自动重试一次
+    let res = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: [{ role: 'user', content: userContent }] }),
+        });
+      } catch (e) {
+        // 网络层失败（含浏览器 fetch 超时）→ 重试一次
+        if (attempt === 1) { await new Promise((r) => setTimeout(r, 1000)); continue; }
+        window.alert('AI 服务连接失败，请稍后重试。若多次失败，您可以直接手动编辑文本。');
         return;
       }
+      if (res.ok) break;
+      // 网关错误（502/503/504）→ 重试一次；其他错误直接结束
+      if ([502, 503, 504].includes(res.status) && attempt === 1) {
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      break;
+    }
 
-      // API returned an error status — surface it for debugging
-      let errMsg = `API 请求失败（状态码 ${res.status}）`;
-      try {
-        const errData = await res.json();
-        if (errData?.error) errMsg = `AI 服务出错：${errData.error}`;
-      } catch (_) {}
-      window.alert(errMsg);
-      return;
-    } catch (e) {
-      window.alert(`AI 服务连接失败：${e.message || '网络错误'}`);
+    if (res && res.ok) {
+      const data = await res.json();
+      setText(data.content);
+      setShowPrompt(false);
+      setPromptInput('');
       return;
     }
 
-    // (No silent fallback anymore — surface errors instead)
-    setShowPrompt(false);
-    setPromptInput('');
+    // 两次都失败 → 友好提示（不暴露内部细节）
+    let errMsg = `AI 服务暂不可用（${res ? `状态码 ${res.status}` : '网络错误'}），请稍后重试或直接手动编辑文本。`;
+    try {
+      const errData = await (res && res.json());
+      if (errData?.error) errMsg = `AI 服务暂不可用：${errData.error}`;
+    } catch (_) {}
+    window.alert(errMsg);
   };
 
   const templatePaid = paidForRef.current[q.id]?.template || false;
@@ -316,7 +324,7 @@ export default function ModuleAPage() {
           </div>
           <div className="flex-1 flex flex-col p-5 gap-3 min-h-0">
             <div className="flex-1 relative">
-              <textarea value={text} onChange={e => setText(e.target.value)}
+              <textarea value={text} onChange={e => setText(e.target.value)} onPaste={onPaste}
                 className="w-full h-full min-w-0 min-h-[120px] xl:min-h-[200px] p-4 text-[15px] border border-slate-200 rounded-lg resize-y leading-relaxed text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
               />
             </div>
@@ -387,40 +395,30 @@ export default function ModuleAPage() {
                 ) : (
                   <p className="text-sm text-slate-400 text-center py-8">（该题型暂无工作规范）</p>
                 )}
-                {!evidencePaid && (
-                  <button onClick={onEvidence} disabled={energyPoints < 3}
-                    className="w-full px-4 py-2.5 text-sm rounded-lg font-medium flex items-center justify-center gap-2 bg-violet-50 text-violet-700 border-2 border-violet-200 hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                    <Eye className="w-4 h-4" /> 查阅原始材料（再付 1 点）
-                  </button>
-                )}
               </div>
             ) : (
-              /* Fully locked */
+              /* Fully locked（操作统一在底部 action bar，这里不再重复放按钮） */
               <div className="h-full flex flex-col items-center justify-center text-center gap-4">
                 <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center"><Lock className="w-7 h-7 text-slate-300" /></div>
                 <div>
                   <p className="text-base font-medium text-slate-600">参考信息已锁定</p>
-                  <p className="text-sm text-slate-400 mt-1">消耗精力查阅工作规范或原始材料</p>
-                </div>
-                <div className="flex flex-col gap-2 w-full max-w-[220px]">
-                  <button onClick={onShowTemplate} disabled={!templatePaid && energyPoints < 2}
-                    className={`w-full px-4 py-2.5 text-sm rounded-lg font-medium flex items-center justify-center gap-2 ${
-                      energyPoints >= 2 || templatePaid ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-slate-100 text-slate-300 cursor-not-allowed'
-                    }`}>
-                    <BookOpen className="w-4 h-4" /> 查看工作规范（2点）
-                  </button>
-                  <button onClick={onEvidence} disabled={!evidencePaid && energyPoints < 3}
-                    className={`w-full px-4 py-2.5 text-sm rounded-lg font-medium flex items-center justify-center gap-2 ${
-                      energyPoints >= 3 || evidencePaid ? 'bg-violet-500 text-white hover:bg-violet-600' : 'bg-slate-100 text-slate-300 cursor-not-allowed'
-                    }`}>
-                    <FileText className="w-4 h-4" /> 查阅原始材料（3点）
-                  </button>
+                  <p className="text-sm text-slate-400 mt-1">消耗精力解锁工作规范或原始材料</p>
                 </div>
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* 消耗精力二次确认弹窗 */}
+      <ConfirmModal
+        open={!!pendingAction}
+        cost={pendingAction?.cost || 0}
+        energy={energyPoints}
+        label={pendingAction?.type === 'evidence' ? '解锁材料包' : pendingAction?.type === 'template' ? '查看工作规范' : '微调 Prompt'}
+        onConfirm={confirmPay}
+        onCancel={cancelPay}
+      />
     </div>
   );
 }
