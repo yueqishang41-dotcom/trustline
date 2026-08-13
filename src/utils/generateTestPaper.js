@@ -88,8 +88,24 @@ export function generateTestPaper() {
     }
   }
 
-  // --- Module B: random 10 ---
-  const selectedB = shuffle(allB).slice(0, 10);
+  // --- Module B: stratified 10 covering all three constructs ---
+  // 每人 10 题必须覆盖 校准/核验/合规 三个构念（否则该构念维度分缺失，无法做三构念相关与 EFA）。
+  // 在可行分布中随机选一个（[3,4,3] / [4,3,3] / [3,3,4]），保证每个构念 3–4 题。
+  const BDIMS = ['校准式依赖能力', '核验监督能力', '合规边界执行力'];
+  const B_DISTRIBUTIONS = [[3, 4, 3], [4, 3, 3], [3, 3, 4]];
+  let selectedB = null;
+  for (const dist of shuffle(B_DISTRIBUTIONS)) {
+    const attempt = [];
+    let feasible = true;
+    for (let i = 0; i < BDIMS.length; i++) {
+      const pool = allB.filter(q => (q.coreDimension || '') === BDIMS[i]);
+      if (pool.length < dist[i]) { feasible = false; break; }
+      attempt.push(...shuffle(pool).slice(0, dist[i]));
+    }
+    if (feasible) { selectedB = attempt; break; }
+  }
+  // 兜底：若均不可行（题库构念题不足），退回随机 10
+  if (!selectedB) selectedB = shuffle(allB).slice(0, 10);
 
   return {
     moduleA: shuffle(selectedA),
