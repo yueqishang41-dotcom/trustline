@@ -31,12 +31,22 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
-SUFFIX = '__act_regen'
+# 动作标记 → 行为日志 action → CSV 列后缀
+# 精力扣费日志是能量账目的权威来源（20 - 已消耗 = energyRemaining 已验证），
+# 故以日志为准补回所有动作标记。
+ACTION_MAP = [
+    ('view_evidence', '__act_evidence'),
+    ('view_template', '__act_template'),
+    ('regenerate_prompt', '__act_regen'),
+]
 
 
-def regen_ids_from_logs(logs):
-    """从行为日志中提取所有用过微调的题目 ID 集合。"""
-    return {lg.get('questionId') for lg in (logs or []) if lg.get('action') == 'regenerate_prompt'}
+def flag_map_from_logs(logs):
+    """从行为日志提取每个动作的题目 ID 集合：{action: set(questionIds)}"""
+    out = {}
+    for action, _ in ACTION_MAP:
+        out[action] = {lg.get('questionId') for lg in (logs or []) if lg.get('action') == action}
+    return out
 
 
 def fix_csv(path, out_path):
@@ -47,7 +57,10 @@ def fix_csv(path, out_path):
         return 1
 
     fieldnames = list(reader[0].keys())
-    regen_cols = [c for c in fieldnames if c.endswith(SUFFIX)]
+    # 每类动作列：{后缀: [列名...]}
+    action_cols = {}
+    for _, suffix in ACTION_MAP:
+        action_cols[suffix] = [c for c in fieldnames if c.endswith(suffix)]
 
     fixed_rows = 0
     total_cells = 0
@@ -57,16 +70,18 @@ def fix_csv(path, out_path):
             logs = json.loads(logs_raw) if logs_raw else []
         except Exception:
             logs = []
-        ids = regen_ids_from_logs(logs)
-        if not ids:
-            continue
+        flags = flag_map_from_logs(logs)
         row_fixed = False
-        for col in regen_cols:
-            qid = col[:-len(SUFFIX)]  # 去掉 __act_regen 后缀得题目 ID
-            if qid in ids and row.get(col, '') not in ('1', '2'):
-                row[col] = '1'
-                total_cells += 1
-                row_fixed = True
+        for action, suffix in ACTION_MAP:
+            ids = flags.get(action) or set()
+            if not ids:
+                continue
+            for col in action_cols[suffix]:
+                qid = col[:-len(suffix)]  # 去掉后缀得题目 ID
+                if qid in ids and row.get(col, '') not in ('1', '2'):
+                    row[col] = '1'
+                    total_cells += 1
+                    row_fixed = True
         if row_fixed:
             fixed_rows += 1
 
@@ -76,11 +91,11 @@ def fix_csv(path, out_path):
         w.writeheader()
         w.writerows(reader)
 
-    print(f'完成：{len(reader)} 名被试，{len(regen_cols)} 个 act_regen 列。')
-    print(f'补回微调标记：共 {total_cells} 个单元格，涉及 {fixed_rows} 行（被试）。')
+    labels = '、'.join(f'{suffix.strip("_")} {len(action_cols[suffix])}列' for _, suffix in ACTION_MAP)
+    print(f'完成：{len(reader)} 名被试，动作列：{labels}。')
+    print(f'补回动作标记：共 {total_cells} 个单元格，涉及 {fixed_rows} 行（被试）。')
     print(f'修正后文件：{out_path}')
-    print('建议核对：打开修正后 CSV，找一个曾报"扣了 5 点"的被试，'
-          '其对应题目列应看到 1；同时用 recover_regen_usage.py 对照它的微调次数。')
+    print('提示：以精力扣费日志为权威来源（能量账目已验证 20-消耗=剩余）。')
     return 0
 
 
@@ -89,22 +104,25 @@ def fix_json(path, out_path):
         data = json.load(f)
     payloads = data if isinstance(data, list) else [data]
 
+    key_map = {'view_evidence': 'viewEvidence', 'view_template': 'viewTemplate', 'regenerate_prompt': 'regenerate'}
     corrected = 0
     for p in payloads:
-        ids = regen_ids_from_logs(p.get('behavioralLogs'))
-        if not ids:
-            continue
+        flags = flag_map_from_logs(p.get('behavioralLogs'))
         resp_map = p.get('moduleA', {}).get('responses') or {}
         for qid, resp in resp_map.items():
-            if qid in ids:
-                acts = resp.setdefault('actionsUsed', {})
-                acts['regenerate'] = True
+            acts = resp.setdefault('actionsUsed', {})
+            changed = False
+            for action, key in key_map.items():
+                if qid in (flags.get(action) or set()) and not acts.get(key):
+                    acts[key] = True
+                    changed = True
+            if changed:
                 corrected += 1
 
     with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    print(f'完成：修正 {corrected} 道题的 actionsUsed.regenerate = true。')
+    print(f'完成：修正 {corrected} 道题的 actionsUsed 动作标记 = true。')
     print(f'修正后文件：{out_path}')
     return 0
 

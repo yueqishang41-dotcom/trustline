@@ -48,12 +48,46 @@ function bigramSimilarity(a, b) {
   return intersection.size / union.size;
 }
 
+// 否定式修正标记：短语前 4 字内出现任一否定词，视为"已修正"而非"残留错误"
+// （例如正解"尚未获得最高级安全认证"不得被 mustFix"最高级安全认证"误判为残留）
+const NEG_RE = /(不|未|无|非|别|勿|莫|并没有|并无|切勿|不再|不可|不应|不宜|不得|无需|无须|拒绝|否认|取消|避免|放弃|并非)/;
+
+/**
+ * 判断文本中是否"肯定式"出现了目标短语（前 4 字内无否定词）。
+ * 否定式提及（如"并非平稳态势"）不计为残留。
+ */
+function containsNotNegated(text, phrase) {
+  if (!phrase) return false;
+  let idx = text.indexOf(phrase);
+  while (idx >= 0) {
+    const before = text.slice(Math.max(0, idx - 4), idx);
+    if (!NEG_RE.test(before)) return true;
+    idx = text.indexOf(phrase, idx + 1);
+  }
+  return false;
+}
+
+/**
+ * complianceHints 支持正则（如 \\d{11}）或字面短语，同样排除否定式提及。
+ */
+function hintMatches(text, hint) {
+  let re;
+  try { re = new RegExp(hint); } catch { re = new RegExp(hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); }
+  const m = re.exec(text);
+  if (!m) return false;
+  const before = text.slice(Math.max(0, m.index - 4), m.index);
+  return !NEG_RE.test(before);
+}
+
 /**
  * Score a Module A question with sub-dimension breakdown.
+ * 2026-08 预实验修订：正确性改为「关键事实命中率 + 二元组相似度」取高，
+ * 并增加「保留 AI 植入错误（mustFix）」「合规残留（complianceHints）」定向扣分，
+ * 以拉开高/低分组得分差距，改善模块A区分度。
  * Returns { total, correctness, evidenceBoundary, compliance, resourceEfficiency }
  */
 export function scoreModuleAQuestion(question, response) {
-  if (!response) return { total: 0, correctness: 0, evidenceBoundary: 0, compliance: 0, resourceEfficiency: 0 };
+  if (!response) return { total: 0, correctness: 0, evidenceBoundary: 0, compliance: 0, resourceEfficiency: 0, rationale: [] };
 
   const { editedText, actionsUsed = {} } = response;
   const originalDraft = question.aiDraft || '';
@@ -66,37 +100,47 @@ export function scoreModuleAQuestion(question, response) {
     editedClean !== draftClean &&
     textSimilarity(draftClean, editedClean) < 0.95;
 
-  // 1. Correctness & Accuracy (0-3)
-  let correctness = 0;
-  if (correctOutput) {
-    // 有参考答案：比较"最终交付文本"与理想答案的二元组相似度。
-    // 提交内容 = 编辑后的终稿（未编辑则视为提交了 AI 初稿）。
-    const submitted = editedClean || draftClean;
-    const sim = bigramSimilarity(submitted, correctOutput.trim());
-    if (sim > 0.8) correctness = 3;
-    else if (sim > 0.6) correctness = 2;
-    else correctness = 1;
-  } else if (hasSignificantEdit) {
-    // 无参考答案：退化为"编辑行为奖励"
-    correctness = 2;
-  } else {
-    correctness = 1;
-  }
+  const submitted = editedClean || draftClean;
 
-  // 2. Evidence Boundary (0-3)
+  // 中文数字/单位间空格可能缺失，统一去除空白后匹配
+  const denorm = (s) => s.replace(/\s+/g, '');
+  const submittedNorm = denorm(submitted);
+  const keyFacts = (question.keyFacts || []).map(denorm).filter(Boolean);
+  const mustFix = (question.mustFix || []).map(denorm).filter(Boolean);
+  const complianceHints = (question.complianceHints || []).map(denorm).filter(Boolean);
+
+  const factHit = keyFacts.filter((k) => submittedNorm.includes(k)).length;
+  const factRatio = keyFacts.length ? factHit / keyFacts.length : 0;
+  const bigram = bigramSimilarity(submitted, (correctOutput || '').trim());
+
+  // 1. Correctness & Accuracy (0-3)：关键事实命中率 与 二元组相似度 取高
+  const factScore = factRatio >= 0.85 ? 3 : factRatio >= 0.6 ? 2.5 : factRatio >= 0.4 ? 2 : factRatio >= 0.2 ? 1.5 : 1;
+  const bigramScore = bigram > 0.8 ? 3 : bigram > 0.65 ? 2.5 : bigram > 0.5 ? 2 : bigram > 0.35 ? 1.5 : 1;
+  let correctness = Math.max(factScore, bigramScore);
+
+  // 保留 AI 植入错误 → 正确性降至最低档（1分封顶）
+  // 否定式修正（如"并未企稳回升"）不计为残留错误
+  const retainedFlaw = mustFix.some((m) => containsNotNegated(submittedNorm, m));
+  if (retainedFlaw) correctness = Math.min(correctness, 1);
+
+  // 2. Evidence Boundary (0-3)：看过材料且关键事实命中良好才拿满
   const viewedEvidence = actionsUsed.viewEvidence || false;
   const usedTemplate = actionsUsed.viewTemplate || false;
   const usedRegenerate = actionsUsed.regenerate || false;
 
   let evidenceBoundary = 0;
-  if (viewedEvidence) evidenceBoundary += 1.5;
+  if (viewedEvidence) evidenceBoundary += factRatio >= 0.5 ? 1.5 : 1;
   if (usedTemplate) evidenceBoundary += 1;
   if (usedRegenerate && !viewedEvidence) evidenceBoundary += 0.5;
 
-  // 3. Compliance Boundary (0-2)
+  // 3. Compliance Boundary (0-2)：合规残留（PII/越权/敏感信息）一票扣到底
+  const complianceViolation = complianceHints.length > 0 && complianceHints.some((h) => hintMatches(submittedNorm, h));
   let compliance = 0;
-  if (hasSignificantEdit) compliance += 1;
-  if (viewedEvidence || usedTemplate) compliance += 0.5;
+  if (!complianceViolation) {
+    if (hasSignificantEdit) compliance += 1;
+    if (viewedEvidence || usedTemplate) compliance += 0.5;
+  }
+  if (complianceViolation) correctness = Math.min(correctness, 1);
 
   // 4. Resource Efficiency (0-2)
   const totalActions = Object.values(actionsUsed).filter(Boolean).length;
@@ -120,11 +164,13 @@ export function scoreModuleAQuestion(question, response) {
   } else {
     rationale.push('未对AI初稿进行实质修改，直接采纳AI输出');
   }
-  rationale.push(`交付正确性评分 ${correctness}/3（${correctOutput ? '存在参考答案，按相似度判定' : '无参考答案，按编辑行为奖励'}）`);
-  if (viewedEvidence) rationale.push('查阅了原始材料（证据边界 +1.5）');
+  rationale.push(`交付正确性评分 ${correctness}/3（关键事实命中 ${keyFacts.length ? `${Math.round(factRatio * 100)}%` : '无'}，文本相似度 ${(bigram * 100).toFixed(0)}%）`);
+  if (retainedFlaw) rationale.push('⚠ 仍保留AI初稿中的错误表述，正确性受限');
+  if (viewedEvidence) rationale.push(`查阅了原始材料（证据边界 ${factRatio >= 0.5 ? '+1.5' : '+1'}）`);
   if (usedTemplate) rationale.push('查看了工作规范（证据边界 +1）');
   if (usedRegenerate && !viewedEvidence) rationale.push('仅使用重新生成，未查阅证据（证据边界 +0.5）');
-  if (hasSignificantEdit) rationale.push('进行了有效修正（合规边界 +1）');
+  if (hasSignificantEdit && !complianceViolation) rationale.push('进行了有效修正（合规边界 +1）');
+  if (complianceViolation) rationale.push('⚠ 最终文本仍含敏感/越权/错误残留（合规边界 0）');
   rationale.push(`共执行 ${totalActions} 项辅助操作（资源效率 ${resourceEfficiency}/2）`);
 
   return { total, correctness, evidenceBoundary, compliance, resourceEfficiency, rationale };

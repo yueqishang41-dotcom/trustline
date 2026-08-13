@@ -74,6 +74,18 @@ export default function ModuleAPage() {
     questionStartRef.current = Date.now();
   }, [moduleACurrentIndex, q?.id]);
 
+  // 自动保存：当前题编辑内容防抖写入 store（防刷新/误关丢失编辑）
+  useEffect(() => {
+    if (!q) return;
+    const origDraft = clean(q.aiDraft || '');
+    const t = setTimeout(() => {
+      if (text && text !== origDraft) {
+        a.updateModuleAResponse(q.id, { editedText: text });
+      }
+    }, 2000);
+    return () => clearTimeout(t);
+  }, [text, q?.id]);
+
   useEffect(() => {
     if (!startTime) return;
     const tick = () => setCd(Math.max(0, 1500 - Math.floor((Date.now() - new Date(startTime).getTime()) / 1000)));

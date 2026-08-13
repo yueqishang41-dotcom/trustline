@@ -49,12 +49,9 @@ export function generateTestPaper() {
   }
 
   // Each category draws exactly 2 questions. dist[i] = #error questions drawn from category i.
-  // Possible error distributions summing to 3 across 3 categories, each 0..2:
-  const DISTRIBUTIONS = [
-    [2, 1, 0], [2, 0, 1],
-    [1, 2, 0], [1, 1, 1], [1, 0, 2],
-    [0, 2, 1], [0, 1, 2],
-  ];
+  // v3.1 对称设计：严格 3 错 3 对 —— 每类 1 错 1 对（申报书"正确/错误条件随机对称"）。
+  // 要求每类至少有 1 道正确题 + 1 道错误题（题库已含 hr-A7/zxy-A7/dsh-A7 三题正确情境题）。
+  const DISTRIBUTIONS = [[1, 1, 1]];
 
   let selectedA = null;
 
