@@ -19,3 +19,15 @@ Thumbs.db
 *.xlsx
 北部赛区_北京师范大学_测验赛道_ABC队.pdf
 申报书.pdf
+
+# 被试数据（含行为日志，勿上传公开仓库）
+pilot-data*.csv
+pilot-data*.json
+*.pilot-data.json
+
+# 分析/筛查临时文件
+_*.txt
+_*.jpg
+_*.png
+_*.mjs
+_*.py

@@ -1,33 +1,47 @@
-import React, { useEffect, useRef } from 'react';
-import { Clock, Zap, RefreshCw, CheckCircle, Download } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Clock, Zap, CheckCircle, UploadCloud, RefreshCw, AlertCircle } from 'lucide-react';
 import { useTestState, useTestActions } from '../store/testStore';
-import { exportSPSS, exportJSON, exportReport } from '../utils/exportData';
+import { uploadResults, flushPendingUploads } from '../utils/upload';
 
 export default function CompletionPage() {
   const state = useTestState();
   const { reset } = useTestActions();
   const { results, behavioralLogs } = state;
-  const autoSaved = useRef(false);
+  const uploadedOnce = useRef(false);
+  const [uploadState, setUploadState] = useState('idle'); // idle | submitting | submitted | pending
 
-  // Auto-save on completion — trigger once
+  // 提交结果 + 补传历史暂存（只触发一次）
   useEffect(() => {
-    if (!results || autoSaved.current) return;
-    autoSaved.current = true;
+    if (!results || uploadedOnce.current) return;
+    uploadedOnce.current = true;
 
-    // Save to localStorage (backup)
+    // 1) 本地备份（防上传彻底失败时的兜底）
     try {
       localStorage.setItem('aisupervision_final', JSON.stringify(results));
     } catch (e) {}
 
-    // Auto-download result files: CSV + JSON + HTML report (staff-facing)
-    const timer = setTimeout(() => {
-      exportSPSS(results);
-      setTimeout(() => exportJSON(results), 400);
-      setTimeout(() => exportReport(results), 800);
-    }, 500);
+    // 2) 补传此前失败暂存的数据（静默）
+    flushPendingUploads().catch(() => {});
 
-    return () => clearTimeout(timer);
+    // 3) 静默上传本次结果（自动重试 3 次，失败自动暂存，下次打开补传）
+    setUploadState('submitting');
+    uploadResults(results)
+      .then((r) => {
+        setUploadState(r.ok ? 'submitted' : 'pending');
+      })
+      .catch(() => {
+        setUploadState('pending');
+      });
   }, [results]);
+
+  // 手动重试按钮
+  const retryUpload = () => {
+    if (!results) return;
+    setUploadState('submitting');
+    uploadResults(results)
+      .then((r) => setUploadState(r.ok ? 'submitted' : 'pending'))
+      .catch(() => setUploadState('pending'));
+  };
 
   if (!results) {
     return (
@@ -40,6 +54,29 @@ export default function CompletionPage() {
     );
   }
 
+  const uploadBadge = {
+    submitted: {
+      icon: <CheckCircle className="w-4 h-4" />,
+      text: '数据已成功提交',
+      cls: 'bg-emerald-50 text-emerald-600 border-emerald-200',
+    },
+    pending: {
+      icon: <AlertCircle className="w-4 h-4" />,
+      text: '网络异常，数据已本地暂存，将自动重试',
+      cls: 'bg-amber-50 text-amber-600 border-amber-200',
+    },
+    submitting: {
+      icon: <UploadCloud className="w-4 h-4 animate-pulse" />,
+      text: '正在提交数据...',
+      cls: 'bg-blue-50 text-blue-600 border-blue-200',
+    },
+    idle: {
+      icon: <UploadCloud className="w-4 h-4" />,
+      text: '正在准备提交数据...',
+      cls: 'bg-slate-50 text-slate-500 border-slate-200',
+    },
+  }[uploadState];
+
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
       <div className="w-full max-w-lg animate-fadeIn">
@@ -49,7 +86,7 @@ export default function CompletionPage() {
             <CheckCircle className="w-8 h-8 text-emerald-500" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 mb-1">任务完成</h1>
-          <p className="text-base text-slate-500">感谢您的参与，所有作答数据已自动保存。</p>
+          <p className="text-base text-slate-500">感谢您的参与，所有作答数据已自动提交保存。</p>
         </div>
 
         {/* Info card */}
@@ -80,14 +117,20 @@ export default function CompletionPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center justify-center gap-2 text-sm text-emerald-600 bg-emerald-50 rounded-xl px-4 py-3 border border-emerald-200">
-            <Download className="w-4 h-4" />
-            <span>已自动导出成绩单报告（HTML）· CSV · JSON 三个文件</span>
+
+          {/* 上传状态 */}
+          <div className={`flex items-center justify-center gap-2 text-sm rounded-xl px-4 py-3 border ${uploadBadge.cls}`}>
+            {uploadBadge.icon}
+            <span>{uploadBadge.text}</span>
+            {uploadState === 'pending' && (
+              <button onClick={retryUpload} className="ml-1 underline font-medium text-amber-700 hover:text-amber-900">立即重试</button>
+            )}
           </div>
+
           <div className="text-sm text-slate-400 space-y-1 pt-3 border-t border-slate-100">
             <p>开始：{results.startTime ? new Date(results.startTime).toLocaleString('zh-CN') : '-'}</p>
             <p>完成：{results.endTime ? new Date(results.endTime).toLocaleString('zh-CN') : '-'}</p>
-            <p>行为记录：{behavioralLogs?.length || 0} 条</p>
+            <p>行为记录：{behavioralLogs?.length || 0} 条（含切屏、粘贴、微调等全部操作）</p>
           </div>
         </div>
 

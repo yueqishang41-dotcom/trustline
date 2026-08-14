@@ -51,6 +51,8 @@ export default function ModuleAPage() {
   const [showTemplate, setShowTemplate] = useState(false);
   const [cd, setCd] = useState(1500);
   const [pendingAction, setPendingAction] = useState(null); // { type: 'evidence' | 'template' | 'regenerate', cost } 二次确认
+  const [aiLoading, setAiLoading] = useState(false); // 微调生成中
+  const [aiError, setAiError] = useState(null);      // 微调失败提示（保留 promptInput 供重试）
 
   const q = moduleAQuestions && moduleAQuestions[moduleACurrentIndex];
 
@@ -132,21 +134,27 @@ export default function ModuleAPage() {
   const template = getQuestionGuidelines(q);
 
   // --- Payment logic: energy consumed ONCE per question（消耗前二次确认，防误触） ---
+  // 已付费判定同时参考行为日志：paidForRef 在页面重挂载（如刷新）后会丢失，
+  // 而消耗精力会写日志（含 questionId），两者取并集可防止重挂载后重复扣费/漏记。
+  const hasLog = (action) => (state.behavioralLogs || []).some(
+    (l) => l.action === action && (l.questionId === q.id || l.meta?.questionId === q.id)
+  );
+
   const onEvidence = () => {
     if (evidenceUnlocked) { a.setEvidenceUnlocked(false); return; }
-    if (paidForRef.current[q.id]?.evidence) { a.setEvidenceUnlocked(true); return; } // 已付费，免费重开
+    if (paidForRef.current[q.id]?.evidence || hasLog('view_evidence')) { a.setEvidenceUnlocked(true); paidForRef.current[q.id].evidence = true; return; } // 已付费，免费重开
     if (energyPoints >= 3) setPendingAction({ type: 'evidence', cost: 3 }); // 首次：二次确认
   };
 
   const onShowTemplate = () => {
     if (showTemplate) { setShowTemplate(false); return; }
-    if (paidForRef.current[q.id]?.template) { setShowTemplate(true); return; } // 已付费，免费重开
+    if (paidForRef.current[q.id]?.template || hasLog('view_template')) { setShowTemplate(true); paidForRef.current[q.id].template = true; return; } // 已付费，免费重开
     if (energyPoints >= 2) setPendingAction({ type: 'template', cost: 2 }); // 首次：二次确认
   };
 
   const onRegen = () => {
     if (showPrompt) { setShowPrompt(false); return; }
-    if (paidForRef.current[q.id]?.regenerate) { setShowPrompt(true); return; } // 已付费，免费重开
+    if (paidForRef.current[q.id]?.regenerate || hasLog('regenerate_prompt')) { setShowPrompt(true); paidForRef.current[q.id].regenerate = true; return; } // 已付费，免费重开
     if (energyPoints >= 1) setPendingAction({ type: 'regenerate', cost: 1 }); // 首次：二次确认
   };
 
@@ -182,9 +190,10 @@ export default function ModuleAPage() {
       editedText: text,
       timeUsed: Math.round((Date.now() - questionStartRef.current) / 1000),
       actionsUsed: {
-        viewEvidence: paidForRef.current[q.id]?.evidence || false,
-        viewTemplate: paidForRef.current[q.id]?.template || false,
-        regenerate: paidForRef.current[q.id]?.regenerate || false, // 是否使用过"微调 Prompt"（以扣费记录为准）
+        // 与 paidForRef 取并集：防止重挂载（刷新）后漏记已使用过的行为
+        viewEvidence: paidForRef.current[q.id]?.evidence || hasLog('view_evidence'),
+        viewTemplate: paidForRef.current[q.id]?.template || hasLog('view_template'),
+        regenerate: paidForRef.current[q.id]?.regenerate || hasLog('regenerate_prompt'), // 是否使用过"微调 Prompt"（以扣费记录/日志为准）
         editPerformed: text !== orig,
       },
       finalText: text,
@@ -193,14 +202,14 @@ export default function ModuleAPage() {
   };
 
   const applyPrompt = async () => {
-    if (!promptInput.trim()) return;
+    if (!promptInput.trim() || aiLoading) return;
 
     // 微调请求：严格基于当前文本框内容（含已手动编辑部分）修改
     // 仅当「本题已付费解锁工作规范」且「提示语明确提到'规范'」同时满足时，
     // 才将本题工作规范携带给 AI 作为修改依据；否则只按提示语修改，不透露规范内容。
     const currentText = text.trim();
     const guideline = (q.guidelines || '').trim();
-    const unlockedGuideline = paidForRef.current[q.id]?.template === true; // 花过2点解锁本题规范
+    const unlockedGuideline = paidForRef.current[q.id]?.template === true || hasLog('view_template'); // 花过2点解锁本题规范（含刷新后日志兜底）
     const mentionsGuideline = /规范/.test(promptInput);                    // 提示语提到"规范"
     const useGuideline = unlockedGuideline && mentionsGuideline;
 
@@ -227,45 +236,50 @@ export default function ModuleAPage() {
     );
     const userContent = blocks.join('\n');
 
-    // 调用 DeepSeek API 代理（走 /api/chat → Netlify Function），自动重试一次
+    // 调用 DeepSeek API 代理（走 /api/chat），最多 3 次重试、递增退避。
+    // 高峰时段 DeepSeek 常快速返回 429/502/503/504，服务端(api/chat.mjs)已在上游重试一次，
+    // 这里客户端再兜底 3 次，并保留 promptInput 供内联"重试"按钮使用（不再弹窗打断）。
+    const retryable = [429, 500, 502, 503, 504];
     let res = null;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: [{ role: 'user', content: userContent }] }),
-        });
-      } catch (e) {
-        // 网络层失败（含浏览器 fetch 超时）→ 重试一次
-        if (attempt === 1) { await new Promise((r) => setTimeout(r, 1000)); continue; }
-        window.alert('AI 服务连接失败，请稍后重试。若多次失败，您可以直接手动编辑文本。');
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: [{ role: 'user', content: userContent }] }),
+          });
+        } catch (e) {
+          // 网络层失败（含浏览器 fetch 超时）→ 退避后重试
+          if (attempt < 3) { await new Promise((r) => setTimeout(r, 1200 * attempt)); continue; }
+          setAiError('网络连接失败，请稍后重试，或直接手动编辑文本。');
+          return;
+        }
+        if (res.ok) break;
+        if (retryable.includes(res.status) && attempt < 3) {
+          await new Promise((r) => setTimeout(r, 1200 * attempt));
+          continue;
+        }
+        // 非可重试错误 → 直接结束
+        setAiError(`AI 服务暂不可用（状态码 ${res.status}），请稍后重试或直接手动编辑文本。`);
         return;
       }
-      if (res.ok) break;
-      // 网关错误（502/503/504）→ 重试一次；其他错误直接结束
-      if ([502, 503, 504].includes(res.status) && attempt === 1) {
-        await new Promise((r) => setTimeout(r, 1000));
-        continue;
+
+      if (res && res.ok) {
+        const data = await res.json();
+        setText(data.content);
+        setShowPrompt(false);
+        setPromptInput('');
+        return;
       }
-      break;
-    }
 
-    if (res && res.ok) {
-      const data = await res.json();
-      setText(data.content);
-      setShowPrompt(false);
-      setPromptInput('');
-      return;
+      // 3 次可重试都失败 → 内联提示，保留 promptInput，被试可点"重试"
+      setAiError('AI 服务高峰期繁忙，请稍后点击"重试"，或直接手动编辑文本。');
+    } finally {
+      setAiLoading(false);
     }
-
-    // 两次都失败 → 友好提示（不暴露内部细节）
-    let errMsg = `AI 服务暂不可用（${res ? `状态码 ${res.status}` : '网络错误'}），请稍后重试或直接手动编辑文本。`;
-    try {
-      const errData = await (res && res.json());
-      if (errData?.error) errMsg = `AI 服务暂不可用：${errData.error}`;
-    } catch (_) {}
-    window.alert(errMsg);
   };
 
   const templatePaid = paidForRef.current[q.id]?.template || false;
@@ -342,15 +356,26 @@ export default function ModuleAPage() {
             </div>
 
             {showPrompt && (
-              <div className="flex items-center gap-2 bg-amber-50 rounded-lg px-4 py-2.5 border border-amber-200">
-                <input
-                  type="text" value={promptInput} onChange={e => setPromptInput(e.target.value)}
-                  placeholder="输入新约束条件，如：语气改为正式..."
-                  className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
-                  onKeyDown={e => { if (e.key === 'Enter') applyPrompt(); }}
-                />
-                <button onClick={applyPrompt}
-                  className="px-4 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 font-medium">应用</button>
+              <div className="bg-amber-50 rounded-lg px-4 py-2.5 border border-amber-200">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text" value={promptInput} onChange={e => setPromptInput(e.target.value)}
+                    placeholder="输入新约束条件，如：语气改为正式..."
+                    disabled={aiLoading}
+                    className="flex-1 px-3 py-2 text-sm border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300 disabled:bg-amber-100"
+                    onKeyDown={e => { if (e.key === 'Enter' && !aiLoading) applyPrompt(); }}
+                  />
+                  <button onClick={applyPrompt} disabled={aiLoading}
+                    className="px-4 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 font-medium disabled:opacity-60">
+                    {aiLoading ? '生成中...' : '应用'}
+                  </button>
+                </div>
+                {aiError && (
+                  <div className="mt-2 flex items-center gap-2 text-sm text-red-600">
+                    <span>{aiError}</span>
+                    <button onClick={applyPrompt} className="underline font-medium text-amber-700 hover:text-amber-900">重试</button>
+                  </div>
+                )}
               </div>
             )}
 

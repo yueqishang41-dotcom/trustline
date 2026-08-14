@@ -1,12 +1,18 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { TestProvider, useTestState } from './store/testStore';
 import SubjectInfoPage from './pages/SubjectInfoPage';
 import InstructionsPage from './pages/InstructionsPage';
 import ModuleAPage from './pages/ModuleAPage';
 import ModuleBPage from './pages/ModuleBPage';
 import CompletionPage from './pages/CompletionPage';
+import { flushPendingUploads } from './utils/upload';
 
 function TestRouter() {
+  // 应用挂载时静默补传此前上传失败暂存的数据（被试无感）
+  useEffect(() => {
+    flushPendingUploads().catch(() => {});
+  }, []);
+
   try {
     const { phase } = useTestState();
     switch (phase) {

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useCallback, useRef, useEffect } from 'react';
-import { generateTestPaper } from '../utils/generateTestPaper';
+import { buildFormalPaper } from '../utils/generateTestPaper';
 import { runFullScoring } from '../utils/scoringEngine';
 import { saveState, loadState, clearState, createLogEntry } from '../utils/storage';
 
@@ -20,6 +20,7 @@ const initialState = {
   results: null,
   behavioralLogs: [],
   bulkPasteCount: 0,
+  pageBlurCount: 0,
 };
 
 const actions = {
@@ -36,6 +37,7 @@ const actions = {
   FINISH_TEST: 'FINISH_TEST',
   ADD_LOG: 'ADD_LOG',
   ADD_BULK_PASTE: 'ADD_BULK_PASTE',
+  ADD_PAGE_BLUR: 'ADD_PAGE_BLUR',
   RESET: 'RESET',
 };
 
@@ -45,7 +47,8 @@ function testReducer(state, action) {
       return { ...state, subject: action.payload };
 
     case actions.START_TEST: {
-      const paper = generateTestPaper();
+      // 正式卷固定抽题（dsh-A 6题 + zxy-B 10题）
+      const paper = buildFormalPaper();
       const now = new Date().toISOString();
       return {
         ...state,
@@ -61,6 +64,7 @@ function testReducer(state, action) {
         moduleAResponses: {},
         moduleBResponses: {},
         behavioralLogs: [createLogEntry('test_start', 'Test started')],
+        pageBlurCount: 0,
       };
     }
 
@@ -133,11 +137,14 @@ function testReducer(state, action) {
           subjectId: state.subject.id,
           name: state.subject.name,
           role: state.subject.role,
+          formType: 'F',
+          formLabel: '正式卷',
           startTime: state.startTime,
           endTime,
           timeUsedSec: Math.round((new Date(endTime) - new Date(state.startTime)) / 1000),
           energyRemaining: state.energyPoints,
           bulkPasteCount: state.bulkPasteCount,
+          pageBlurCount: state.pageBlurCount,
           moduleAQuestionsInfo: state.moduleAQuestions,
           moduleBQuestionsInfo: state.moduleBQuestions,
           moduleAResponses: state.moduleAResponses,
@@ -166,6 +173,18 @@ function testReducer(state, action) {
       };
     }
 
+    case actions.ADD_PAGE_BLUR: {
+      // 防作弊监控：页面失焦（切屏/切窗口）次数统计
+      return {
+        ...state,
+        pageBlurCount: state.pageBlurCount + 1,
+        behavioralLogs: [
+          ...state.behavioralLogs,
+          createLogEntry('page_blur', '检测到页面失焦', { at: action.payload || null }),
+        ],
+      };
+    }
+
     case actions.RESET:
       clearState();
       return { ...initialState };
@@ -189,6 +208,25 @@ export function TestProvider({ children }) {
       saveState(state);
     }
   }, [state]);
+
+  // 防作弊监控：窗口失焦/切屏（仅测中阶段计数）
+  useEffect(() => {
+    const onBlur = () => {
+      const s = stateRef.current;
+      if (s.phase === 'moduleA' || s.phase === 'moduleB') {
+        dispatch({ type: actions.ADD_PAGE_BLUR, payload: new Date().toISOString() });
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') onBlur();
+    };
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   return (
     <TestContext.Provider value={state}>
@@ -287,12 +325,17 @@ export function useTestActions() {
     dispatch({ type: actions.ADD_BULK_PASTE, payload: length });
   }, [dispatch]);
 
+  // 防作弊监控：页面失焦计数（由 TestProvider 全局监听调用）
+  const addPageBlur = useCallback(() => {
+    dispatch({ type: actions.ADD_PAGE_BLUR });
+  }, [dispatch]);
+
   return {
     setSubject, startTest, setPhase,
     updateModuleAResponse, consumeEnergy,
     setEvidenceUnlocked, setHighlighted,
     updateModuleBResponse,
     goToNextModuleA, goToNextModuleB, finishTest, reset,
-    addBulkPaste,
+    addBulkPaste, addPageBlur,
   };
 }

@@ -4,7 +4,6 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/chat" },
     { "source": "/pilot.html", "destination": "/pilot.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]

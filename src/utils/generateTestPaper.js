@@ -113,4 +113,42 @@ export function generateTestPaper() {
   };
 }
 
+/**
+ * 正式卷固定抽题（老师批准的组装方案）：
+ *   模块A = dsh-A1/A2/A3/A4/A5/A7（3 错 3 对，每类各 1 错 1 对；丢弃 dsh-A6）
+ *   模块B = zxy-B1..B10（核验4 / 合规4 / 校准2，三构念全覆盖）
+ * 同一卷所有被试完全一致，仅模块A呈现顺序随机以消除位置效应。
+ */
+export function buildFormalPaper() {
+  const FORMAL_A_IDS = ['dsh-A1', 'dsh-A2', 'dsh-A3', 'dsh-A4', 'dsh-A5', 'dsh-A7'];
+  const FORMAL_B_IDS = [
+    'zxy-B1', 'zxy-B2', 'zxy-B3', 'zxy-B4', 'zxy-B5',
+    'zxy-B6', 'zxy-B7', 'zxy-B8', 'zxy-B9', 'zxy-B10',
+  ];
+
+  const allA = (itemBank.moduleA.questions || []).map((q) => ({
+    ...q,
+    sceneType: norm(q.sceneType),
+  }));
+  const allB = (itemBank.moduleB.questions || []).map((q) => ({
+    ...q,
+    options: (q.options || []).filter((o) => o.text && o.text.trim() !== ''),
+  }));
+
+  const aMap = Object.fromEntries(allA.map((q) => [q.id, q]));
+  const bMap = Object.fromEntries(allB.map((q) => [q.id, q]));
+
+  const formA = FORMAL_A_IDS.map((id) => aMap[id]);
+  const formB = FORMAL_B_IDS.map((id) => bMap[id]);
+
+  if (formA.some((q) => !q) || formB.some((q) => !q)) {
+    throw new Error('buildFormalPaper: 正式卷题目 id 在题库中缺失');
+  }
+
+  return {
+    moduleA: shuffle(formA), // 呈现顺序随机化
+    moduleB: formB,          // 模块B固定顺序（标准化）
+  };
+}
+
 export default generateTestPaper;
