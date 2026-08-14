@@ -36,11 +36,12 @@ export default async function handler(req, res) {
       out.steps.put = { ok: false, error: String((e && e.message) || e) };
     }
 
-    // 2) 读回
+    // 2) 读回（v2 SDK：私有 Blob 传 access 选项，结果用 stream 读）
     if (out.steps.put && out.steps.put.ok) {
       try {
-        const r = await get(out.steps.put.url);
-        const txt = await (await r.download()).text();
+        const r = await get(out.steps.put.url, { access: 'private', useCache: false });
+        if (!r || !r.stream) throw new Error('get 返回空');
+        const txt = await new Response(r.stream).text();
         out.steps.get = { ok: true, bytes: txt.length };
       } catch (e) {
         out.steps.get = { ok: false, error: String((e && e.message) || e) };

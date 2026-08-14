@@ -34,8 +34,10 @@ export default async function handler(req, res) {
     const payloads = [];
     for (const b of blobs) {
       try {
-        const r = await get(b.url);
-        const text = await (await r.download()).text();
+        // @vercel/blob v2：私有 Blob 必须传 access 选项；返回 { stream, ... } 而非 download()
+        const r = await get(b.url, { access: 'private', useCache: false });
+        if (!r || !r.stream) continue;
+        const text = await new Response(r.stream).text();
         payloads.push(JSON.parse(text));
       } catch (e) { /* 跳过损坏项 */ }
     }
