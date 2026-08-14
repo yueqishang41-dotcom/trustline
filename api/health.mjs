@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     // 1) 写入
     try {
       const blob = await put(key, JSON.stringify({ probe: true, t: Date.now() }), {
-        access: 'public',
+        access: 'private',
         addRandomSuffix: false,
         contentType: 'application/json',
       });

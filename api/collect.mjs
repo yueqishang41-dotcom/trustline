@@ -28,7 +28,9 @@ export default async function handler(req, res) {
 
     const key = `subjects/${payload.subjectId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
     const blob = await put(key, JSON.stringify(payload), {
-      access: 'public',
+      // 存储为「私有」模式：必须用 private，否则 put 报 "Cannot use public access on a private store"
+      // 私有 Blob 需 Token 才能读，导出端 /api/export 走 get() 内部自动带 Token，不受影响，且被试数据更安全
+      access: 'private',
       addRandomSuffix: false,
       contentType: 'application/json',
     });
