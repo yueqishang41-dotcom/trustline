@@ -1,6 +1,7 @@
 import React from 'react';
 import { Zap, Clock, ArrowRight, FileText, RefreshCw, Edit3, Send, BookOpen, Eye } from 'lucide-react';
 import { useTestActions } from '../store/testStore';
+import { requestKioskFullscreen } from '../utils/kiosk';
 
 export default function InstructionsPage() {
   const { startTest } = useTestActions();
@@ -187,7 +188,13 @@ export default function InstructionsPage() {
 
         {/* Start */}
         <div className="panel p-6">
-          <button onClick={() => startTest()} className="btn-primary w-full text-base py-3">
+          <button
+            onClick={() => {
+              requestKioskFullscreen(); // 机考模式：进入测验即请求全屏（需用户手势）
+              startTest();
+            }}
+            className="btn-primary w-full text-base py-3"
+          >
             开始工作 <ArrowRight className="w-5 h-5" />
           </button>
         </div>

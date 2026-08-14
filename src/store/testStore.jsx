@@ -2,6 +2,7 @@ import React, { createContext, useContext, useReducer, useCallback, useRef, useE
 import { buildFormalPaper } from '../utils/generateTestPaper';
 import { runFullScoring } from '../utils/scoringEngine';
 import { saveState, loadState, clearState, createLogEntry } from '../utils/storage';
+import { setKioskLock } from '../utils/kiosk';
 
 const initialState = {
   subject: { id: '', name: '', role: '' },
@@ -213,7 +214,8 @@ export function TestProvider({ children }) {
   useEffect(() => {
     const onBlur = () => {
       const s = stateRef.current;
-      if (s.phase === 'moduleA' || s.phase === 'moduleB') {
+      // moduleA/moduleB/completion 均计入（与机考锁一致，完成页离开同样记录）
+      if (s.phase === 'moduleA' || s.phase === 'moduleB' || s.phase === 'completion') {
         dispatch({ type: actions.ADD_PAGE_BLUR, payload: new Date().toISOString() });
       }
     };
@@ -227,6 +229,13 @@ export function TestProvider({ children }) {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
+
+  // 机考锁定：进入测验（模块A/B/完成页）后启用 kiosk 锁，返回首页（RESET）解锁
+  useEffect(() => {
+    setKioskLock(
+      state.phase === 'moduleA' || state.phase === 'moduleB' || state.phase === 'completion'
+    );
+  }, [state.phase]);
 
   return (
     <TestContext.Provider value={state}>
