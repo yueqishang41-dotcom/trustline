@@ -33,8 +33,15 @@ export default async function handler(req, res) {
       contentType: 'application/json',
     });
 
+    console.log(`[collect] saved subject=${payload.subjectId} key=${key} bytes=${JSON.stringify(payload).length}`);
     return res.status(200).json({ ok: true, url: blob.url });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: String((err && err.message) || err) });
+    // 关键失败信息同时写入 Vercel 函数日志（Function Logs），便于后台排查
+    const msg = String((err && err.message) || err);
+    const hint = !process.env.BLOB_READ_WRITE_TOKEN
+      ? '（BLOB_READ_WRITE_TOKEN 未配置，请在 Vercel → Settings → Environment Variables 添加并重新部署）'
+      : '';
+    console.error(`[collect] FAILED: ${msg} ${hint}`);
+    return res.status(500).json({ ok: false, error: msg, hint });
   }
 }

@@ -12,6 +12,9 @@ import { buildPayload } from './payload';
 
 const ENDPOINT = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FORMAL_DATA_ENDPOINT) || '/api/collect';
 
+// 上线诊断用：构建时把实际端点打进控制台，浏览器 F12 即可核对
+console.warn('[upload] 数据上传端点 =', ENDPOINT);
+
 const MAX_ATTEMPTS = 3;
 const PENDING_KEY = 'trustline_formal_pending_uploads';
 
@@ -25,10 +28,11 @@ export function getEndpoint() {
  */
 async function uploadPayload(payload, { pendingSave = true } = {}) {
   if (!ENDPOINT) {
-    return { ok: false, attempts: 0, backup: false, pending: false, reason: 'NO_ENDPOINT' };
+    return { ok: false, attempts: 0, backup: false, pending: false, reason: 'NO_ENDPOINT', endpoint: null };
   }
 
   let lastErr = null;
+  let lastStatus = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const res = await fetch(ENDPOINT, {
@@ -37,16 +41,20 @@ async function uploadPayload(payload, { pendingSave = true } = {}) {
         body: JSON.stringify(payload),
       });
       if (res.ok) {
-        return { ok: true, attempts: attempt, backup: false };
+        return { ok: true, attempts: attempt, backup: false, endpoint: ENDPOINT };
       }
+      lastStatus = res.status;
       lastErr = new Error(`HTTP ${res.status}`);
       // 服务器明确报错的（非网络抖动）不必空等全部重试：直接进入暂存
       if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+        const reason = `HTTP ${res.status}（${ENDPOINT}）`;
+        console.error('[upload] 上传失败(服务器明确报错):', reason);
         if (pendingSave) savePending(payload);
-        return { ok: false, attempts: attempt, backup: false, pending: true, reason: `HTTP ${res.status}` };
+        return { ok: false, attempts: attempt, backup: false, pending: true, reason, endpoint: ENDPOINT };
       }
     } catch (e) {
       lastErr = e;
+      console.error(`[upload] 上传第${attempt}次网络异常:`, e && e.message, '端点=', ENDPOINT);
     }
     if (attempt < MAX_ATTEMPTS) {
       await sleep(1200 * attempt); // 递增退避：1.2s / 2.4s
@@ -54,7 +62,8 @@ async function uploadPayload(payload, { pendingSave = true } = {}) {
   }
   // 全部失败 → 暂存本地，下次打开页面自动补传（被试无感，不触发下载）
   if (pendingSave) savePending(payload);
-  return { ok: false, attempts: MAX_ATTEMPTS, backup: false, pending: true, reason: lastErr && lastErr.message };
+  const reason = lastStatus ? `HTTP ${lastStatus}（${ENDPOINT}）` : ((lastErr && lastErr.message) || 'network error') + `（${ENDPOINT}）`;
+  return { ok: false, attempts: MAX_ATTEMPTS, backup: false, pending: true, reason, endpoint: ENDPOINT };
 }
 
 /**

@@ -90,8 +90,14 @@ function buildWideCSV(payloads) {
     for (const qs of (p.scores?.aQuestionScores || [])) if (qs.id) aIds.add(qs.id);
     for (const qs of (p.scores?.bQuestionScores || [])) if (qs.id) bIds.add(qs.id);
   }
-  const aIdList = [...aIds].sort((x, y) => idSortKey(x).localeCompare(idSortKey(y)));
-  const bIdList = [...bIds].sort((x, y) => idSortKey(x).localeCompare(idSortKey(y)));
+  // 没有任何数据时也输出正式卷全量逐题列（保证结构始终可见，值留空）
+  const FALLBACK_A = ['dsh-A1', 'dsh-A2', 'dsh-A3', 'dsh-A4', 'dsh-A5', 'dsh-A7'];
+  const FALLBACK_B = [
+    'zxy-B1', 'zxy-B2', 'zxy-B3', 'zxy-B4', 'zxy-B5',
+    'zxy-B6', 'zxy-B7', 'zxy-B8', 'zxy-B9', 'zxy-B10',
+  ];
+  const aIdList = (aIds.size ? [...aIds] : FALLBACK_A).sort((x, y) => idSortKey(x).localeCompare(idSortKey(y)));
+  const bIdList = (bIds.size ? [...bIds] : FALLBACK_B).sort((x, y) => idSortKey(x).localeCompare(idSortKey(y)));
 
   // 模块 A 每题：AI 得分(5) + 行为动作标志(4) + 参考答稿 / AI初稿 / 被试最终文本
   const aHeaders = [];

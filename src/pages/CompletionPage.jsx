@@ -9,6 +9,7 @@ export default function CompletionPage() {
   const { results, behavioralLogs } = state;
   const uploadedOnce = useRef(false);
   const [uploadState, setUploadState] = useState('idle'); // idle | submitting | submitted | pending
+  const [uploadErr, setUploadErr] = useState('');
 
   // 提交结果 + 补传历史暂存（只触发一次）
   useEffect(() => {
@@ -28,9 +29,11 @@ export default function CompletionPage() {
     uploadResults(results)
       .then((r) => {
         setUploadState(r.ok ? 'submitted' : 'pending');
+        if (!r.ok) setUploadErr(r.reason || '');
       })
-      .catch(() => {
+      .catch((e) => {
         setUploadState('pending');
+        setUploadErr((e && e.message) || '');
       });
   }, [results]);
 
@@ -39,8 +42,14 @@ export default function CompletionPage() {
     if (!results) return;
     setUploadState('submitting');
     uploadResults(results)
-      .then((r) => setUploadState(r.ok ? 'submitted' : 'pending'))
-      .catch(() => setUploadState('pending'));
+      .then((r) => {
+        setUploadState(r.ok ? 'submitted' : 'pending');
+        if (!r.ok) setUploadErr(r.reason || '');
+      })
+      .catch((e) => {
+        setUploadState('pending');
+        setUploadErr((e && e.message) || '');
+      });
   };
 
   if (!results) {
@@ -119,11 +128,16 @@ export default function CompletionPage() {
           </div>
 
           {/* 上传状态 */}
-          <div className={`flex items-center justify-center gap-2 text-sm rounded-xl px-4 py-3 border ${uploadBadge.cls}`}>
-            {uploadBadge.icon}
-            <span>{uploadBadge.text}</span>
-            {uploadState === 'pending' && (
-              <button onClick={retryUpload} className="ml-1 underline font-medium text-amber-700 hover:text-amber-900">立即重试</button>
+          <div className={`flex flex-col items-center gap-1 text-sm rounded-xl px-4 py-3 border ${uploadBadge.cls}`}>
+            <div className="flex items-center gap-2">
+              {uploadBadge.icon}
+              <span>{uploadBadge.text}</span>
+              {uploadState === 'pending' && (
+                <button onClick={retryUpload} className="ml-1 underline font-medium text-amber-700 hover:text-amber-900">立即重试</button>
+              )}
+            </div>
+            {uploadState === 'pending' && uploadErr && (
+              <p className="text-xs opacity-80 max-w-full break-all">失败原因：{uploadErr}</p>
             )}
           </div>
 
