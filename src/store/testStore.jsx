@@ -39,6 +39,7 @@ const actions = {
   ADD_LOG: 'ADD_LOG',
   ADD_BULK_PASTE: 'ADD_BULK_PASTE',
   ADD_PAGE_BLUR: 'ADD_PAGE_BLUR',
+  ADD_PAGE_BLUR_RETURN: 'ADD_PAGE_BLUR_RETURN',
   RESET: 'RESET',
 };
 
@@ -186,6 +187,22 @@ function testReducer(state, action) {
       };
     }
 
+    case actions.ADD_PAGE_BLUR_RETURN: {
+      // 切屏回归：记录离开与回归时刻/时长，便于区分"短暂误触"与"长时间离开"
+      const p = action.payload || {};
+      return {
+        ...state,
+        behavioralLogs: [
+          ...state.behavioralLogs,
+          createLogEntry('page_blur_return', '切屏后回到页面', {
+            leftAt: p.leftAt || null,
+            returnedAt: p.returnedAt || null,
+            durationMs: p.durationMs || 0,
+          }),
+        ],
+      };
+    }
+
     case actions.RESET:
       clearState();
       return { ...initialState };
@@ -211,21 +228,49 @@ export function TestProvider({ children }) {
   }, [state]);
 
   // 防作弊监控：窗口失焦/切屏（仅测中阶段计数）
+  // - 去重：Alt+Tab 会同时触发 window.blur 与 visibilitychange(hidden)，800ms 内合并为一次"切屏事件"
+  // - 计时：记录每次切屏的离开与回归时刻/时长（page_blur_return），供分析区分"短暂误触"与"长时间离开"
   useEffect(() => {
-    const onBlur = () => {
+    const blurStartRef = { current: null };
+    const lastBlurLogAtRef = { current: 0 };
+
+    const inTest = () => {
       const s = stateRef.current;
-      // moduleA/moduleB/completion 均计入（与机考锁一致，完成页离开同样记录）
-      if (s.phase === 'moduleA' || s.phase === 'moduleB' || s.phase === 'completion') {
-        dispatch({ type: actions.ADD_PAGE_BLUR, payload: new Date().toISOString() });
-      }
+      return s.phase === 'moduleA' || s.phase === 'moduleB' || s.phase === 'completion';
     };
+
+    const onBlur = () => {
+      if (!inTest()) return;
+      const now = Date.now();
+      if (now - lastBlurLogAtRef.current < 800) return; // blur+hidden 双触发去重
+      lastBlurLogAtRef.current = now;
+      blurStartRef.current = new Date().toISOString();
+      dispatch({ type: actions.ADD_PAGE_BLUR, payload: blurStartRef.current });
+    };
+
+    const onFocusReturn = () => {
+      if (!inTest()) return;
+      if (!blurStartRef.current) return;
+      const leftAt = blurStartRef.current;
+      const returnedAt = new Date().toISOString();
+      blurStartRef.current = null;
+      dispatch({
+        type: actions.ADD_PAGE_BLUR_RETURN,
+        payload: { leftAt, returnedAt, durationMs: Math.max(0, Date.now() - new Date(leftAt).getTime()) },
+      });
+    };
+
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') onBlur();
+      else onFocusReturn();
     };
+
     window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocusReturn);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocusReturn);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
