@@ -8,8 +8,38 @@ export default function CompletionPage() {
   const { reset } = useTestActions();
   const { results, behavioralLogs } = state;
   const uploadedOnce = useRef(false);
+  const uploadInFlight = useRef(false); // 同一结果并发只发一次，避免导出出现重复记录
+  const uploadStateRef = useRef('idle');
   const [uploadState, setUploadState] = useState('idle'); // idle | submitting | submitted | pending
   const [uploadErr, setUploadErr] = useState('');
+  const [showLeaveWarn, setShowLeaveWarn] = useState(false); // 返回首页前未上传成功的确认弹窗
+  const [leaveMsg, setLeaveMsg] = useState('');
+  const [retrying, setRetrying] = useState(false);
+
+  // 同步最新 uploadState，供异步回调读取
+  const setStateSafe = (s) => {
+    uploadStateRef.current = s;
+    setUploadState(s);
+  };
+
+  // 唯一上传通道：同一结果同时只 POST 一次（每次 POST 都会新建一条 Blob）
+  const doUpload = async (rs) => {
+    if (uploadInFlight.current) return null; // 已在传，不重复发
+    uploadInFlight.current = true;
+    setStateSafe('submitting');
+    try {
+      const r = await uploadResults(rs);
+      setStateSafe(r.ok ? 'submitted' : 'pending');
+      if (!r.ok) setUploadErr(r.reason || '');
+      return r;
+    } catch (e) {
+      setStateSafe('pending');
+      setUploadErr((e && e.message) || '');
+      return { ok: false, reason: (e && e.message) || 'unknown' };
+    } finally {
+      uploadInFlight.current = false;
+    }
+  };
 
   // 提交结果 + 补传历史暂存（只触发一次）
   useEffect(() => {
@@ -24,32 +54,36 @@ export default function CompletionPage() {
     // 2) 补传此前失败暂存的数据（静默）
     flushPendingUploads().catch(() => {});
 
-    // 3) 静默上传本次结果（自动重试 3 次，失败自动暂存，下次打开补传）
-    setUploadState('submitting');
-    uploadResults(results)
-      .then((r) => {
-        setUploadState(r.ok ? 'submitted' : 'pending');
-        if (!r.ok) setUploadErr(r.reason || '');
-      })
-      .catch((e) => {
-        setUploadState('pending');
-        setUploadErr((e && e.message) || '');
-      });
+    // 3) 上传本次结果（自动重试 3 次，失败自动暂存，下次打开补传）
+    doUpload(results);
   }, [results]);
 
-  // 手动重试按钮
-  const retryUpload = () => {
-    if (!results) return;
-    setUploadState('submitting');
-    uploadResults(results)
-      .then((r) => {
-        setUploadState(r.ok ? 'submitted' : 'pending');
-        if (!r.ok) setUploadErr(r.reason || '');
-      })
-      .catch((e) => {
-        setUploadState('pending');
-        setUploadErr((e && e.message) || '');
-      });
+  // 手动重试
+  const retryUpload = () => doUpload(results);
+
+  // 返回首页：数据确认已上传才直接返回；否则先抢救（补传队列+重传本次），仍失败则弹窗让主试决定
+  const handleGoHome = async () => {
+    if (uploadStateRef.current === 'submitted') { reset(); return; }
+    setRetrying(true);
+    try {
+      await flushPendingUploads();
+      const r = await doUpload(results);
+      if (r && r.ok) { reset(); return; }
+      // r===null → 正在上传中；否则上传失败
+      setLeaveMsg(r === null
+        ? '数据仍在自动上传中，请稍候片刻再返回；也可以直接返回（数据已在本机备份，之后打开页面会自动补传，不会丢失）。'
+        : (uploadErr ? `上传未成功：${uploadErr}。数据已在本机备份，之后打开页面会自动补传，不会丢失。` : '上传未成功。数据已在本机备份，之后打开页面会自动补传，不会丢失。'));
+      setShowLeaveWarn(true);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  // 弹窗内重试：正在传时先不重复发
+  const handleModalRetry = async () => {
+    if (uploadInFlight.current) return;
+    const r = await doUpload(results);
+    if (r && r.ok) setShowLeaveWarn(false);
   };
 
   if (!results) {
@@ -149,11 +183,42 @@ export default function CompletionPage() {
         </div>
 
         <div className="text-center mt-5">
-          <button onClick={reset} className="btn-secondary text-sm py-2.5 px-5">
-            <RefreshCw className="w-4 h-4" /> 返回首页
+          <button
+            onClick={handleGoHome}
+            disabled={retrying}
+            className="btn-secondary text-sm py-2.5 px-5"
+          >
+            <RefreshCw className={`w-4 h-4 ${retrying ? 'animate-spin' : ''}`} />
+            {retrying ? '正在重新提交数据…' : '返回首页'}
           </button>
         </div>
       </div>
+
+      {/* 未确认上传成功时的返回确认弹窗（防主试误操作丢数据） */}
+      {showLeaveWarn && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl">
+            <div className="flex items-center gap-2 text-amber-600">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <h3 className="text-base font-bold text-slate-900">数据尚未确认上传成功</h3>
+            </div>
+            <p className="text-sm text-slate-600 leading-relaxed">{leaveMsg}</p>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={handleModalRetry}
+                disabled={uploadState === 'submitting'}
+                className="btn-primary flex-1"
+              >
+                重试上传
+              </button>
+              <button onClick={reset} className="btn-secondary flex-1">
+                仍然返回
+              </button>
+            </div>
+            <p className="text-xs text-slate-400">「仍然返回」不会删除本机备份，下次打开页面仍会自动补传。</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
